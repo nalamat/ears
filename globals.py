@@ -47,7 +47,6 @@ trialStatesAwaiting = ['Awaiting random trigger', 'Awaiting spout',
 
 '''General session settings.'''
 session = Context(
-    Item('sessionTime'       , 'Session time'     , str  , ''                ),
     Item('dataDir'           , 'Data directory'   , str  , 'data'            ),
     Item('subjectID'         , 'Subject ID'       , str  , 'C1Fluffy'        ),
     Item('experimentName'    , 'Experiment name'  , str  , 'MMR'              ,
@@ -63,11 +62,13 @@ session = Context(
     Item('paradigmFile'      , 'Paradigm file'    , str  , ''                ),
     Item('rove'              , 'Rove params'      , list ,
         ['targetFrequency', 'targetLevel']                                   ),
+    Item('sessionTime'       , ''                 , str  , ''                ),
     Item('experimentStart'   , ''                 , str  , ''                ),
     Item('experimentStop'    , ''                 , str  , ''                ),
     Item('experimentDuration', ''                 , float, 0                 ),
     Item('totalReward'       , ''                 , float, 0                 ),
     Item('dataViable'        , 'Data viable'      , bool , False             ),
+    Item('computerName'      , ''                 , str  , ''                ),
     )
 
 '''Calibration settings.

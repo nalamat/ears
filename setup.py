@@ -18,6 +18,7 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 
 import os
 import logging
+import platform
 import numpy      as     np
 import datetime   as     dt
 from   PyQt5      import QtCore, QtWidgets, QtGui
@@ -25,7 +26,7 @@ from   PyQt5      import QtCore, QtWidgets, QtGui
 import misc
 import config
 import guiHelper
-import globals as gb
+import globals    as     gb
 
 
 log = logging.getLogger(__name__)
@@ -264,7 +265,6 @@ class SetupWindow(QtWidgets.QDialog):
 
         gb.session.clearValues()
 
-        gb.session.sessionTime.value        = gb.sessionTimeComplete
         gb.session.dataDir.value            = dataDir
         gb.session.subjectID.value          = self.subjectID.currentText()
         gb.session.experimentName.value     = self.experimentName.currentText()
@@ -275,6 +275,8 @@ class SetupWindow(QtWidgets.QDialog):
         gb.session.calibrationFile.value    = calibrationFile
         gb.session.paradigmFile.value       = paradigmFile
         gb.session.rove.value               = rove
+        gb.session.sessionTime.value        = gb.sessionTimeComplete
+        gb.session.computerName.value       = platform.node()
 
         super().accept()
 
