@@ -1,0 +1,12 @@
+conda:
+- python (v3)
+- pyserial
+- scipy
+- numpy
+- pandas
+- pytables
+- pyqt (v5)
+- pyqtgraph
+
+pip:
+- pydaqmx

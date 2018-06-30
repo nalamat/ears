@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   xmlns:dc="http://purl.org/dc/elements/1.1/"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   fill="#000000"
+   height="48"
+   viewBox="0 0 24 24"
+   width="48"
+   version="1.1"
+   id="svg6"
+   sodipodi:docname="timeout2.svg"
+   inkscape:version="0.92.2 (5c3e80d, 2017-08-06)">
+  <metadata
+     id="metadata12">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <defs
+     id="defs10" />
+  <sodipodi:namedview
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1"
+     objecttolerance="10"
+     gridtolerance="10"
+     guidetolerance="10"
+     inkscape:pageopacity="0"
+     inkscape:pageshadow="2"
+     inkscape:window-width="1199"
+     inkscape:window-height="763"
+     id="namedview8"
+     showgrid="false"
+     inkscape:zoom="6.9532167"
+     inkscape:cx="10.740935"
+     inkscape:cy="22.897454"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg6" />
+  <path
+     d="M0 0h24v24H0z"
+     fill="none"
+     id="path2" />
+  <path
+     d="M 6.9766719,6.7479432 6.1442236,7.5803914 9.421579,10.857746 v 2.444907 h 1.966413 v 5.899239 l 2.346586,-4.024592 2.720205,2.71365 0.832448,-0.832447 z m 8.9996171,4.5882958 h -2.621884 l 2.621884,-5.243767 h -6.55471 v 1.428927 l 5.545285,5.545285 z"
+     id="path4"
+     inkscape:connector-curvature="0"
+     style="fill:#646464;fill-opacity:1;stroke-width:0.65547109" />
+  <path
+     inkscape:connector-curvature="0"
+     d="M 12,1.9999998 C 6.48,1.9999998 2,6.4800002 2,12 2,17.52 6.48,22 12,22 17.52,22 22,17.52 22,12 22,6.4800001 17.52,1.9999998 12,1.9999998 Z M 12,20 C 7.59,20 4,16.41 4,12 4,7.5900001 7.59,4.0000001 12,4.0000001 c 4.41,0 8,3.59 8,7.9999999 0,4.41 -3.59,8 -8,8 z"
+     id="path4-9"
+     style="fill:#646464;fill-opacity:1;stroke-width:1"
+     sodipodi:nodetypes="ssssssssss" />
+</svg>

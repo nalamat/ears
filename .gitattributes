@@ -1,0 +1,16 @@
+* text eol=lf
+
+.gitattributes text
+.gitignore     text
+
+*.py  text
+*.pyw text
+*.m   text
+*.txt text
+*.md  text
+
+*.mat binary
+*.wav binary
+*.svg binary
+*.png binary
+*.ico binary
