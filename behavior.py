@@ -819,6 +819,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     @guiHelper.showExceptions
     def goClicked(self, *args):
+        log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Go remind'
 
         if gb.status.experimentState == 'Running':
@@ -832,6 +833,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     @guiHelper.showExceptions
     def nogoClicked(self, *args):
+        log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Nogo remind'
 
         if gb.status.experimentState == 'Running':
@@ -845,6 +847,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     @guiHelper.showExceptions
     def trialClicked(self, *args):
+        log.info('Triggering trial manually')
         if gb.status.trialState.value not in gb.trialStatesAwaiting:
             # raise RuntimeError(
             #     'Cannot start trial when another is in progress')
@@ -853,14 +856,17 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     @guiHelper.showExceptions
     def targetClicked(self, *args):
-        self.playTarget()
+        log.info('Triggering target manually')
+        self.triggerTarget()
 
     @guiHelper.showExceptions
     def pumpClicked(self, *args):
+        log.info('Triggering pump manually')
         self.triggerPump()
 
     @guiHelper.showExceptions
     def timeoutClicked(self, *args):
+        log.info('Triggering timeout manually')
         self.triggerTimeout()
 
     @guiHelper.showExceptions
@@ -1424,7 +1430,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         gb.trial.trialStart.value = ts
         # self.trialActive = True
 
-        self.playTarget()
+        self.triggerTarget()
 
         # reset forcing of next trial type
         self.forceTrialType = None
@@ -1587,7 +1593,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         return y
 
     def updateTarget(self, mode):
-        '''Play, start or stop the target sound.
+        '''Triger, start or stop the target sound.
 
         Args:
             mode (str): Accepted values
@@ -1607,7 +1613,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         # the target at a specific phase of the modulated masker
         maskerFrequency = gb.trial.maskerFrequency.value
-        if (mode=='play' and maskerFrequency != 0 and
+        if (mode=='trigger' and maskerFrequency != 0 and
                 not np.isnan(maskerFrequency)):
             periodNS       = fs / maskerFrequency
             phaseDelayNS   = gb.trial.phaseDelay.value/360 * periodNS
@@ -1617,7 +1623,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 delayNS   += periodNS
             ns            += int(delayNS)
 
-        if mode=='play':
+        if mode=='trigger':
             targetDuration     = gb.trial.targetDuration.value
             if targetDuration==0 or np.isnan(targetDuration):
                 targetDuration = len(self.soundData[self.targetFile])/fs
@@ -1629,7 +1635,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             targetDuration     = gb.trial.targetRamp.value * 1e-3
         else:
             raise ValueError('Wrong value given for the mode parameter. '
-                'Should be "play", "start" or "stop"')
+                'Should be "trigger", "start" or "stop"')
 
         targetLength  = int(targetDuration * fs)
         targetData    = self.getSound('target', ns, targetLength)
@@ -1638,9 +1644,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         targetRampLength = int(gb.trial.targetRamp.value * 1e-3 * fs)
         if targetRampLength != 0:
             targetRamp = self.getRamp(targetRampLength)
-            if mode=='play' or mode=='start':
+            if mode=='trigger' or mode=='start':
                 targetData[0:targetRampLength] *= targetRamp
-            if mode=='play' or mode=='stop':
+            if mode=='trigger' or mode=='stop':
                 targetData[-targetRampLength:] *= targetRamp[::-1]
 
         # zero-pad if target is less than `minLength`
@@ -1669,11 +1675,11 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         log.debug('Logging target epoch to HDF5')
         file = os.path.basename(self.targetFile)
         ts = ns / fs
-        if mode=='play':
+        if mode=='trigger':
             self.targetEpoch.append(ts, ts+targetDuration)
             gb.trial.targetStart.value = ts
             gb.trial.targetStop.value  = ts+targetDuration
-            log.info('Playing target "%s" at %.3f for %g duration',
+            log.info('Triggering target "%s" at %.3f for %g duration',
                 file, ts, targetDuration)
         elif mode=='start':
             self.targetEpoch.start(ts)
@@ -1690,8 +1696,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     def stopTarget(self):
         self.updateTarget('stop')
 
-    def playTarget(self):
-        self.updateTarget('play')
+    def triggerTarget(self):
+        self.updateTarget('trigger')
 
     def updateMasker(self):
         # do nothing if neither masker file nor masker level have changed
@@ -1811,7 +1817,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             self.updatePump()
 
     def startTimeout(self, recordTS=True):
-        log.debug('Starting timeout')
+        log.info('Starting timeout')
         daqs.digitalOutput.write(0)
         self.timeoutActive = True
         # record timestamp
@@ -1822,7 +1828,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     def stopTimeout(self, recordTS=True):
         if not self.timeoutActive: return
-        log.debug('Stopping timeout')
+        log.info('Stopping timeout')
         daqs.digitalOutput.write(1)
         self.timeoutActive = False
         # record timestamp
