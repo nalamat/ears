@@ -66,17 +66,20 @@ try:
     log = logging.getLogger(__name__)
     log.info('Opening application')
 
-    # global exception hook
-    def exception_hook(exctype, value, traceback):
-        log.exception('Uncaught exception occured',
-            exc_info=(exctype, value, traceback))
+    # global exception handling
+    def masterExceptionHook(exctype, value, traceback):
+        if exctype in (SystemExit, KeyboardInterrupt):
+            log.info('Exit requested with "%s"' % exctype.__name__)
+        else:
+            log.exception('Uncaught exception occured',
+                exc_info=(exctype, value, traceback))
         hdf5.close()
         # restore old working directory
         os.chdir(oldCWD)
         log.info('Exiting application')
         sys.exit(1)
     sys._excepthook = sys.excepthook
-    sys.excepthook  = exception_hook
+    sys.excepthook  = masterExceptionHook
 
     # initialize app
     app = QtWidgets.QApplication([])
