@@ -136,11 +136,17 @@ class BaseTask():
         log.debug('Stopping %s task', self.name)
         if SIM:
             self._running = False
+            self._stopped()
         else:
             self._task.StopTask()
+            self._stopped()
             # reset task buffers and resources to enable restart
             self._task.TaskControl(mx.DAQmx_Val_Task_Unreserve)
             self._task.TaskControl(mx.DAQmx_Val_Task_Commit)
+
+    def _stopped(self):
+        '''Called after stopping the task and before reseting it.'''
+        pass
 
     def _clear(self):
         if self.running:
@@ -624,8 +630,9 @@ class AnalogInput(BaseAnalog):
 
         super()._start()
 
-    def _stop(self):
-        super()._stop()
+    def _stopped(self):
+        '''Called after stopping the task and before reseting it.'''
+        # super()._stop()
         if SIM:
             self._simBuffer.nsWritten = 0
 
@@ -914,8 +921,9 @@ class AnalogOutput(BaseAnalog):
 
         super()._start()
 
-    def _stop(self):
-        super()._stop()
+    def _stopped(self):
+        '''Called after stopping the task and before reseting it.'''
+        # log.info('`_stopping` for %s task', self.name)
         if self._samples == np.inf:
             self._nsOffset = self.nsGenerated
         if SIM:
@@ -974,7 +982,7 @@ class AnalogOutput(BaseAnalog):
             if self._simSink:
                 ds = int(self.fs / self._simSink.fs)
                 to = to // ds * ds
-                if to < self._simBuffer.nsRead: return
+                if to <= self._simBuffer.nsRead: return
                 # log.debug('Reading %s task sim buffer to %d (nsWritten %d)' %
                 #     (self.name, to, self.nsWritten) )
                 data = self._simBuffer.read(to=to).copy()
