@@ -1355,12 +1355,14 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.buttonEpoch.stop(ts)
         # TODO: zero pad analogInput, physiologyInput and probably
         # analogOutput._nsOffset to align them accroding to their fs
-        ns = daqs.analogOutput.nsGenerated
-        nsInput = int(ns / daqs.analogOutput.fs * daqs.analogInput.fs)
-        nsNeeded = nsInput - self.speakerTrace.ns
+        ns         = daqs.analogOutput.nsGenerated
+        nsInput    = int(ns / daqs.analogOutput.fs * daqs.analogInput.fs)
+        nsAcquired = self.speakerTrace.ns
+        nsNeeded   = nsInput - nsAcquired
+        log.info('Zero-padding recordings (ns: %d, nsInput: %d, nsAcquired: '
+            '%d, nsNeeded: %d)' % (ns, nsInput, nsAcquired, nsNeeded) )
         data = np.zeros((daqs.analogInput.lineCount, nsNeeded))
         self.analogInputDataAcquired(daqs.analogInput, data)
-        self.plot .updatePlot()
         self.plot       .stop()
         self.updateTimer.stop()
 
