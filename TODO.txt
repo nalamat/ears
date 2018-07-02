@@ -15,3 +15,4 @@ x should Context.clearValues set all items to type()? what about np.nan?
 + play target and masker
 + activate pump
 + log pump
+- add _nsOffset to daq.AnalogInput
