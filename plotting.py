@@ -467,6 +467,7 @@ class ChannelPlotWidget(pg.PlotWidget):
     def stop(self):
         if self._timer.isActive():
             self._timer.stop()
+        self.updatePlot()
 
     def updatePlot(self):
         try:
