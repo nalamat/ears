@@ -42,7 +42,7 @@ syringeDiameters    = {'B-D 10cc': 14.43, 'B-D 20cc': 19.05,
 trialTypesGo        = ['Go remind', 'Go']
 trialTypesNogo      = ['Nogo', 'Nogo remind', 'Nogo repeat']
 trialTypes          = trialTypesGo + trialTypesNogo
-trialStatesAwaiting = ['Awaiting random trigger', 'Awaiting spout',
+trialStatesAwaiting = ['None', 'Awaiting random trigger', 'Awaiting spout',
     'Awaiting button', 'Awaiting poke']
 
 '''General session settings.'''
