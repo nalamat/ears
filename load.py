@@ -152,15 +152,15 @@ try:
 
         # open behavior window
         log.info('Opening behavior window')
-        behaviorWindow = behavior.BehaviorWindow()
-        behaviorWindow.show()
-        guiHelper.centerWindow(behaviorWindow)
+        gb.behaviorWindow = behavior.BehaviorWindow()
+        gb.behaviorWindow.show()
+        guiHelper.centerWindow(gb.behaviorWindow)
 
         if gb.session.recording.value == 'Physiology':
             log.info('Opening physiology window')
-            physiologyWindow = physiology.PhysiologyWindow()
-            physiologyWindow.show()
-            guiHelper.centerWindow(physiologyWindow, -2)
+            gb.physiologyWindow = physiology.PhysiologyWindow()
+            gb.physiologyWindow.show()
+            guiHelper.centerWindow(gb.physiologyWindow, -2)
 
     app.exec_()
 
