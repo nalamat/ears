@@ -57,6 +57,10 @@ log = logging.getLogger(__name__)
 #
 #     return False
 
+def listLike(obj, strIncluded=True):
+    return (hasattr(obj, '__len__') and
+        (strIncluded or not isinstance(obj, str)) )
+
 def inDirectory(file, directory):
     file      = os.path.normcase(os.path.realpath(file     ))
     directory = os.path.normcase(os.path.realpath(directory))
