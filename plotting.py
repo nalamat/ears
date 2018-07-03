@@ -344,19 +344,30 @@ class ChannelPlotWidget(pg.PlotWidget):
         return self._xRange
 
     # current timestamp (from latest sample in timeBase)
-    @property
-    def ts(self):
-        if self._timeBase is None:
-            raise AttributeError('No timeBase has been set')
-        return self._timeBase.ts
+    # @property
+    # def ts(self):
+    #     if self.timeBase is None:
+    #         raise AttributeError('No timeBase has been set')
+    #     return self.timeBase.ts
 
     # min time in the current plot window
     # @property
     # def tsMin(self):
     #     return int(self.ts//self.tsRange*self.tsRange)
 
+    @property
+    def timeBase(self):
+        return self._timeBase
+
+    @timeBase.setter
+    def timeBase(self, value):
+        if not isinstance(value, AnalogChannel):
+            raise TypeError('`timeBase` can only be an instance '
+                'of `AnalogChannel`')
+        self._timeBase = value
+
     def __init__(self, yLimits=(-1,1), yGrid=1, xRange=10, xGrid=1, fps=60,
-            *args, **kwargs):
+            yLabel='', *args, **kwargs):
         '''
         Args:
             yLimits (tuple of float): Minimum and maximum values shown on the
@@ -367,29 +378,28 @@ class ChannelPlotWidget(pg.PlotWidget):
                 Defaults to 1.
             xRange (float): Defaults to 10.
             xGrid (float): Spacing between vertical grid lines. Defaults to 1.
+            fps (float): ...
+
         '''
 
         super().__init__(*args, **kwargs, axisItems={'left':Axis('left')})
 
         # should not change after __init__
-        self._yLimits     = yLimits
-        self._yGrid       = yGrid
-        self._xRange      = xRange
-        self._yGrid       = yGrid
-        self._fps         = fps
+        self._yLimits       = yLimits
+        self._yGrid         = yGrid
+        self._xRange        = xRange
+        self._yGrid         = yGrid
+        self._fps           = fps
         self._calculatedFPS = 0
 
-        self._channels    = []
-        self._timeBase    = None
-        self._updateTimes = []    # hold last update times for FPS calculation
-        self._tsMinLast   = None
+        self._channels      = []
+        self._timeBase      = None
+        self._updateTimes   = []    # hold last update times for FPS calculation
+        self._tsMinLast     = None
 
-        self._timer       = QtCore.QTimer()
+        self._timer         = QtCore.QTimer()
         self._timer.timeout.connect(self.updatePlot)
         self._timer.setInterval(1000/self.fps)
-
-        # self.updateFPS    = None
-        # self.updateTS     = None
 
         self.setBackground('w')
         self.setMouseEnabled(False, False)
@@ -410,6 +420,8 @@ class ChannelPlotWidget(pg.PlotWidget):
         self.getAxis('right' ).show()
         self.getAxis('top'   ).show()
         self.getAxis('top'   ).setLabel('<br />Time (min:sec)')
+        if yLabel:
+            self.getAxis('left').setLabel('<br />' + yLabel)
         xticks = [(t, '%02d:%02d' % (t//60,t%60)) for t in range(xRange+1)]
         self.getAxis('top').setTicks([xticks])
 
@@ -441,7 +453,7 @@ class ChannelPlotWidget(pg.PlotWidget):
         self.getAxis('left').setTicks([yMajorTicks, yMinorTicks])
         self.getAxis('left').setStyle(tickLength=0)
 
-    def addChannel(self, channel, label=None, labelOffset=0, timeBase=False):
+    def addChannel(self, channel, label=None, labelOffset=0):
         if not isinstance(channel, BaseChannel):
             raise TypeError('Channel should be an instance of BaseChannel'
                 'or one of its subclasses')
@@ -450,11 +462,15 @@ class ChannelPlotWidget(pg.PlotWidget):
 
         self._channels.append(channel)
         if label:
+            if not misc.listLike(label, False): label       = [label      ]
+            if not misc.listLike(labelOffset ): labelOffset = [labelOffset]
+            if len(label) != len(labelOffset):
+                raise ValueError('Number of `label`s (%d) should match number '
+                    'of `labelOffset`s (%d)' % (len(label), len(labelOffset)))
             ticks = self.getAxis('left')._tickLevels
-            ticks = [ticks[0]+[(labelOffset, ' ' + label)], ticks[1]]
+            for i in range(len(label)):
+                ticks = [ticks[0] + [(labelOffset[i],' '+label[i])], ticks[1]]
             self.getAxis('left').setTicks(ticks)
-        if timeBase:
-            self._timeBase = channel
         # if not self._timer.isActive():
         #     self._updateLast = dt.datetime.now()
         #     self._timer.start()
@@ -485,7 +501,7 @@ class ChannelPlotWidget(pg.PlotWidget):
             nextWindow = False
 
             if self._timeBase is not None:
-                ts = self._timeBase.ts
+                ts = self.timeBase.ts
                 tsMin = int(ts//self.xRange*self.xRange)
 
                 # determine when plot advances to next time window
@@ -505,9 +521,6 @@ class ChannelPlotWidget(pg.PlotWidget):
                     self._tsMinLast = tsMin
                     nextWindow = True
 
-            # if self.updateFPS is not None: self.updateFPS('%.1f' % fps)
-            # if self.updateTS  is not None: self.updateTS ('%.2f' % ts )
-
             # update all channels
             for channel in self._channels:
                 channel.updatePlot(ts, tsMin, nextWindow)
@@ -520,9 +533,47 @@ class ChannelPlotWidget(pg.PlotWidget):
 class BaseChannel():
     '''Base class for all channels.
 
-    Contains no functional code, only for class hierarchy purposes.
+    Contains not much functional code, mostly for class hierarchy purposes.
     '''
-    pass
+
+    @property
+    def plotWidget(self):
+        return self._plotWidget
+
+    @property
+    def source(self):
+        return self._source
+
+    @source.setter
+    def source(self, value):
+        if value and not isinstance(value, BaseChannel):
+            raise TypeError('`source` should be of type `BaseChannel`')
+        self._source = value
+        if value:
+            value._sink  = self
+
+    @property
+    def sink(self):
+        return self._sink
+
+    @sink.setter
+    def sink(self, value):
+        if value and not isinstance(value, BaseChannel):
+            raise TypeError('`sink` should be of type `BaseChannel`')
+        self._sink    = value
+        if value:
+            value._source = self
+
+    def __init__(self, plotWidget=None, label=None, labelOffset=0,
+            source=None):
+        self._plotWidget  = plotWidget
+        self._label       = label
+        self._labelOffset = labelOffset
+        self.source       = source
+        self._sink        = None
+
+        if plotWidget:
+            plotWidget.addChannel(self, label, labelOffset)
 
 
 class AnalogChannel(BaseChannel):
@@ -552,10 +603,6 @@ class AnalogChannel(BaseChannel):
     def ts(self):
         '''Last timestamp in seconds'''
         return self.ns/self._fs
-
-    @property
-    def plotWidget(self):
-        return self._plotWidget
 
     @property
     def yScale(self):
@@ -611,38 +658,39 @@ class AnalogChannel(BaseChannel):
 
             if self._init: self._refresh()
 
-    def __init__(self, fs, hdf5Node=None, plotWidget=None, lineCount=1,
-            yScale=1, yOffset=0, yGap=1, color=list('rgbcmyk'), timeBase=False,
-            chunkSize=1, flFilter=0, fhFilter=0, fsPlot=5e3,
-            label=None, labelOffset=0):
+    def __init__(self, fs, plotWidget=None, label=None, labelOffset=0,
+            source=None, hdf5Node=None, lineCount=1, yScale=1, yOffset=0,
+            yGap=1, color=list('rgbcmyk'), chunkSize=1, flFilter=0, fhFilter=0,
+            fsPlot=5e3):
         '''
         Args:
             fs (float): Actual sampling frequency of the channel in Hz.
+            plotWidget (ChannelPlotWidget): Defaults to None.
+            label (str or list of str): ...
+            labelOffset (float): ...
+            source (BaseChannel): ...
             hdf5Node (str): Path of the node to store data in HDF5 file.
                 Defaults to None.
-            plotWidget (ChannelPlotWidget): Defaults to None.
             lineCount (int): Number of lines. Defaults to 1.
-            timeBase (bool): Whether to set current channel as timeBase of the
-                plotWidget. Defaults to False.
             yScale (float): In-place scaling factor for indivudal lines.
                 Defaults to 1.
             yOffset (float): Defaults to 0.
             yGap (float): Defaults to 10.
-            color (list of string or tuple): Defaults to list('rgbcmyk').
+            color (list of str or tuple): Defaults to list('rgbcmyk').
             chunkSize (float): In seconds. Defaults to 1.
             flFilter (float): Lower cutoff frequency.
             fhFilter (float): Higher cutoff frequency.
             fsPlot (float): In Hz. Defaults to 5e3.
-            label (str): ...
-            labelOffset (float): ...
         '''
+
+        labelOffset = np.arange(lineCount)*yGap+yOffset+labelOffset
+        super().__init__(plotWidget, label, labelOffset, source)
 
         self._init        = False
         self._refreshLock = threading.Lock()
 
         self._fs          = fs
         self._hdf5Node    = hdf5Node
-        self._plotWidget  = plotWidget
         self._lineCount   = lineCount
         self._yScale      = yScale
         self._yOffset     = yOffset
@@ -665,8 +713,6 @@ class AnalogChannel(BaseChannel):
         self._processThread = threading.Thread(target=self._processLoop)
         self._processThread.daemon = True
         self._processThread.start()
-
-        plotWidget.addChannel(self, label, yOffset+labelOffset, timeBase)
 
         if hdf5Node is not None:
             if hdf5.contains(hdf5Node):
@@ -853,7 +899,12 @@ class BaseEpochChannel(BaseChannel):
     epochs in the HDF5 file format and has no graphical represenation. Plotting
     funcionality can be added by subclasses.
     '''
-    def __init__(self, hdf5Node=None):
+
+    def __init__(self, plotWidget=None, label=None, labelOffset=0, source=None,
+            hdf5Node=None):
+
+        super().__init__(plotWidget, label, labelOffset, source)
+
         self._hdf5Node   = hdf5Node
         self._data       = []
         self._dataAdded  = []
@@ -875,6 +926,9 @@ class BaseEpochChannel(BaseChannel):
             self._data += [[ts, None]]
             self._dataAdded = True
 
+        if self._sink:
+            self._sink.start(ts)
+
     def stop(self, ts):
         # only stop epoch (if any)
         if not len(self._data) or self._data[-1][1] is not None:
@@ -891,6 +945,9 @@ class BaseEpochChannel(BaseChannel):
             self._data[-1][1] = ts
             self._dataAdded = True
 
+        if self._sink:
+            self._sink.stop(ts)
+
     def append(self, start, stop):
         # full epoch
         if len(self._data) and self._data[-1][1] is None:
@@ -905,16 +962,20 @@ class BaseEpochChannel(BaseChannel):
             self._data += [[start, stop]]
             self._dataAdded = True
 
+        if self._sink:
+            self._sink.append(start, stop)
+
 
 class SymbEpochChannel(BaseEpochChannel):
     '''Epoch channel represented graphically with two symbols.'''
-    def __init__(self, hdf5Node=None, plotWidget=None, yOffset=0,
-            color=(0,255,0), symbolStart='t1', symbolStop='t', symbolSize=15,
-            label=None):
-        super().__init__(hdf5Node)
 
-        self._plotWidget   = plotWidget
-        plotWidget.addChannel(self, label, yOffset)
+    def __init__(self, plotWidget=None, label=None, labelOffset=0, source=None,
+            hdf5Node=None, yOffset=0, color=(0,255,0), symbolStart='t1',
+            symbolStop='t', symbolSize=15):
+
+        labelOffset += yOffset
+        super().__init__(plotWidget, label, labelOffset, source, hdf5Node)
+
         self._yOffset      = yOffset
 
         # prepare scatter plots, one for epoch start and one for epoch stop
@@ -956,12 +1017,11 @@ class SymbEpochChannel(BaseEpochChannel):
 class RectEpochChannel(BaseEpochChannel):
     '''Epoch channel represented graphically by rectangle.'''
 
-    def __init__(self, hdf5Node=None, plotWidget=None, yOffset=0, yRange=1,
-            color=(0,0,255,100), label=None):
-        super().__init__(hdf5Node)
+    def __init__(self, plotWidget=None, label=None, labelOffset=0, source=None,
+            hdf5Node=None, yOffset=0, yRange=1, color=(0,0,255,100)):
+        labelOffset += yOffset + yRange/2
+        super().__init__(plotWidget, label, labelOffset, source, hdf5Node)
 
-        self._plotWidget = plotWidget
-        plotWidget.addChannel(self, label, yOffset+yRange/2)
         self._yOffset = yOffset
         self._yRange  = yRange
         self._color   = color

@@ -169,54 +169,59 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.pump.setDirection('infuse')
 
     def initPlot(self):
+
+        inputFS           = daqs.analogInput.fs
+        physiology        = gb.session.recording.value == 'Physiology'
+        speakerNode       = '/trace/speaker' if physiology else None
+        micNode           = '/trace/mic'     if physiology else None
+
         # plot widget
-        self.plot         = plotting.ChannelPlotWidget(yLimits=(-1, 7.5),
+        self.plot         = plotting.ChannelPlotWidget(yLimits=(-1,7.5),
                             yGrid=[-.5,0,1,2,2.5,4.5,5,6,7], xRange=10)
 
         # analog traces
-        inputFS = daqs.analogInput.fs
-        physiology = gb.session.recording.value == 'Physiology'
-        speakerNode = '/trace/speaker' if physiology else None
-        micNode     = '/trace/mic'     if physiology else None
-        self.speakerTrace = plotting.AnalogChannel(inputFS, speakerNode,
-                            self.plot, yScale=.1, yOffset=6.5,
-                            color=config.COLOR_SPEAKER, timeBase=True,
-                            label='Speaker')
-        self.micTrace     = plotting.AnalogChannel(inputFS, micNode, self.plot,
-                            yScale=.1, yOffset=5.5, color=config.COLOR_MIC,
-                            label='Mic')
-        self.pokeTrace    = plotting.AnalogChannel(inputFS, None, self.plot,
-                            yScale=.2, yOffset=1, color=config.COLOR_POKE,
-                            label='Poke', labelOffset=.5)
-        self.spoutTrace   = plotting.AnalogChannel(inputFS, None, self.plot,
-                            yScale=.2, yOffset=0, color=config.COLOR_SPOUT,
-                            label='Spout', labelOffset=.5)
+        self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
+                            label='Speaker', hdf5Node=speakerNode,
+                            yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
+        self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
+                            label='Mic', hdf5Node=micNode,
+                            yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
+        self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
+                            label='Poke', labelOffset=.5,
+                            yScale=.2, yOffset=1, color=config.COLOR_POKE)
+        self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
+                            label='Spout', labelOffset=.5,
+                            yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
 
         # rectangular epochs
-        self.trialEpoch   = plotting.RectEpochChannel('/epoch/trial',
-                            self.plot, yOffset=4, yRange=.5,
-                            color=config.COLOR_TRIAL, label='Trial')
-        self.targetEpoch  = plotting.RectEpochChannel('/epoch/target',
-                            self.plot, yOffset=3.5, yRange=.5,
-                            color=config.COLOR_TARGET, label='Target')
-        self.pumpEpoch    = plotting.RectEpochChannel('/epoch/pump',
-                            self.plot, yOffset=3, yRange=.5,
-                            color=config.COLOR_PUMP, label='Pump')
-        self.timeoutEpoch = plotting.RectEpochChannel('/epoch/timeout',
-                            self.plot, yOffset=2.5, yRange=.5,
-                            color=config.COLOR_TIMEOUT, label='Timeout')
+        self.trialEpoch   = plotting.RectEpochChannel(self.plot,
+                            label='Trial', hdf5Node='/epoch/trial',
+                            yOffset=4, yRange=.5, color=config.COLOR_TRIAL)
+        self.targetEpoch  = plotting.RectEpochChannel(self.plot,
+                             label='Target', hdf5Node='/epoch/target',
+                            yOffset=3.5, yRange=.5, color=config.COLOR_TARGET)
+        self.pumpEpoch    = plotting.RectEpochChannel(self.plot,
+                            label='Pump', hdf5Node='/epoch/pump',
+                            yOffset=3, yRange=.5, color=config.COLOR_PUMP)
+        self.timeoutEpoch = plotting.RectEpochChannel(self.plot,
+                            label='Timeout', hdf5Node='/epoch/timeout',
+                            yOffset=2.5, yRange=.5, color=config.COLOR_TIMEOUT)
 
         # symbol epochs
-        self.pokeEpoch    = plotting.SymbEpochChannel('/epoch/poke', self.plot,
+        self.pokeEpoch    = plotting.SymbEpochChannel(self.plot,
+                            hdf5Node='/epoch/poke',
                             yOffset=1.5, color=config.COLOR_POKE)
-        self.spoutEpoch   = plotting.SymbEpochChannel('/epoch/spout', self.plot,
+        self.spoutEpoch   = plotting.SymbEpochChannel(self.plot,
+                            hdf5Node='/epoch/spout',
                             yOffset=0.5, color=config.COLOR_SPOUT)
-        self.buttonEpoch  = plotting.SymbEpochChannel('/epoch/button',self.plot,
-                            yOffset=-.25, color=config.COLOR_BUTTON,
-                            label='Button')
+        self.buttonEpoch  = plotting.SymbEpochChannel(self.plot,
+                            label='Button', hdf5Node='/epoch/button',
+                            yOffset=-.25, color=config.COLOR_BUTTON)
 
         # self.generator    = plotting.AnalogGenerator(self.pokeTrace,
         #                     self.spoutTrace, self.speakerTrace, self.micTrace)
+
+        self.plot.timeBase = self.speakerTrace
 
         return self.plot
 
@@ -1367,8 +1372,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         nsNeeded   = nsInput - nsAcquired
         log.info('Zero-padding recordings (ns: %d, nsInput: %d, nsAcquired: '
             '%d, nsNeeded: %d)' % (ns, nsInput, nsAcquired, nsNeeded) )
-        data = np.zeros((daqs.analogInput.lineCount, nsNeeded))
-        self.analogInputDataAcquired(daqs.analogInput, data)
+        if nsNeeded>0:
+            data = np.zeros((daqs.analogInput.lineCount, nsNeeded))
+            self.analogInputDataAcquired(daqs.analogInput, data)
         self.plot       .stop()
         self.updateTimer.stop()
 
@@ -1386,7 +1392,6 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         log.info('Session context: %s', str(gb.session))
 
         hdf5.flush()
-
 
         self.buttons.start  .setEnabled(True )
         self.buttons.pause  .setEnabled(False)

@@ -76,21 +76,43 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # self.evaluateParadigm()
 
     def initDAQ(self):
-        daqs.digitalInput.edgeDetected.connect(self.digitalInputEdgeDetected)
+        # daqs.digitalInput.edgeDetected.connect(self.digitalInputEdgeDetected)
         daqs.physiologyInput.dataAcquired.connect(
             self.physiologyInputDataAcquired)
 
     def initPlot(self):
+        physiologyFS         = daqs.physiologyInput.fs
         lineCount            = daqs.physiologyInput.lineCount
-        self.plot            = plotting.ChannelPlotWidget(yLimits=(-.5, 15.5),
-                               yGrid=list(range(lineCount)))
-        self.physiologyTrace = plotting.AnalogChannel(daqs.physiologyInput.fs,
-                               '/trace/physiology', self.plot, lineCount,
-                               yScale=.05, timeBase=True)
-        self.plot.start()
+        behavior             = gb.behaviorWindow
 
-        # self.generator    = plotting.AnalogGenerator(self.pokeTrace,
-        #                     self.spoutTrace, self.speakerTrace, self.micTrace)
+        self.plot            = plotting.ChannelPlotWidget(yLimits=(-4,15),
+                               yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
+                               yLabel='Electrodes')
+
+        self.physiologyTrace = plotting.AnalogChannel(physiologyFS, self.plot,
+                               label=list(map(str, np.arange(lineCount)+1)),
+                               hdf5Node='/trace/physiology',
+                               lineCount=lineCount,
+                               yScale=.05, yOffset=14, yGap=-1)
+
+        # rectangular plots
+        self.trialEpoch      = plotting.RectEpochChannel(self.plot,
+                               label='Trial', source=behavior.trialEpoch,
+                               yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)
+        self.targetEpoch     = plotting.RectEpochChannel(self.plot,
+                               label='Target', source=behavior.targetEpoch,
+                               yOffset=-2.5, yRange=.5,
+                               color=config.COLOR_TARGET)
+        self.pumpEpoch       = plotting.RectEpochChannel(self.plot,
+                               label='Pump', source=behavior.pumpEpoch,
+                               yOffset=-3, yRange=.5, color=config.COLOR_PUMP)
+        self.timeoutEpoch    = plotting.RectEpochChannel(self.plot,
+                               label='Timeout', source=behavior.timeoutEpoch,
+                               yOffset=-3.5, yRange=.5,
+                               color=config.COLOR_TIMEOUT)
+
+        self.plot.timeBase   = self.physiologyTrace
+        self.plot.start()
 
         return self.plot
 
