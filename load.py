@@ -157,11 +157,16 @@ try:
         guiHelper.centerWindow(gb.behaviorWindow)
 
         if gb.session.recording.value == 'Physiology':
+            # open physiology window
             log.info('Opening physiology window')
             gb.physiologyWindow = physiology.PhysiologyWindow()
             gb.physiologyWindow.show()
             guiHelper.centerWindow(gb.physiologyWindow, -2)
 
+        # set focus to behavior window
+        gb.behaviorWindow.activateWindow()
+
+    # open app
     app.exec_()
 
 except (SystemExit, KeyboardInterrupt) as e:
