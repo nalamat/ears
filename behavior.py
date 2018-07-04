@@ -650,6 +650,29 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         daqs.clear()
 
     @guiHelper.showExceptions
+    def keyPressEvent(self, event):
+        # when an editable widget has focus do not act on key presses
+        wig = QtWidgets.QApplication.focusWidget()
+        if isinstance(wig, (QtWidgets.QLineEdit, QtWidgets.QComboBox,
+                QtWidgets.QTableWidgetItem, QtWidgets.QCheckBox,
+                QtWidgets.QTableWidget)) and not (
+                hasattr(wig, 'isReadOnly') and wig.isReadOnly()):
+            return
+
+        # print('keyReleaseEvent: %d "%s" (focus: %s)' %
+        #     (event.key(), event.text(), type(wig)))
+
+        # start experiment with space or enter keys
+        if (event.key() in (QtCore.Qt.Key_Space,
+                QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and
+                gb.status.experimentState.value in ('Not started', 'Paused')):
+            self.startExperiment()
+        # pause experiment with escape key
+        elif (event.key() == QtCore.Qt.Key_Escape and
+                gb.status.experimentState.value == 'Running'):
+            self.pauseExperiment()
+
+    @guiHelper.showExceptions
     def sessionChanged(self, item, *args):
         item.value = item.getWidgetValue()
         gb.session.overwriteData()
