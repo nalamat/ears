@@ -920,19 +920,23 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         #     else:
         #         return value
 
-        def get(name, fmt=None):
+        def get(name, fmt=None, trialType=None):
             res = '"'
 
+            # if `name` is a rove or performance parameter
             if name in df:
-                for i in range(condCount):
+                # for i in range(condCount):
                     value = df[name][i]
                     if callable(fmt): value = fmt(value)
                     elif fmt:         value = fmt % value
                     if value=='nan': value = ''
-                    if i: res += '\r\n'
-                    res += value
+                    # if i: res += '\r\n'
+                    if trialType and trialType!=df['trialType'][i]:
+                        pass
+                    else:
+                        res += value
 
-            elif len(df):
+            elif len(df) and i==0:
                 value = gb.trial.dataFrame[name].iloc[-1]
                 if callable(fmt): value = fmt(value)
                 elif fmt:         value = fmt % value
@@ -942,49 +946,45 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             res += '"'
             return res
 
-        # for i in range(condCount):
-        i = 0
-        # experiment start date
-        if i==0: data += gb.experimentStart.strftime('%m/%d/%Y')
-        data += '\t'
+        for i in range(condCount):
+            if i==0: data += gb.experimentStart.strftime('%m/%d/%Y')
+            data += '\t'
+            if i==0: data += gb.experimentStart.strftime('%H:%M:%S')
+            data += '\t'
+            data += get('rewardVolume'    , '%g'             ) + '\t'
+            # total reward (ml)
+            if i==0: data += '%g' % gb.session.totalReward.value
+            data += '\t'
+            # experiment duration (mm:ss)
+            if i==0: data += '%02d:%02d' % (
+                gb.session.experimentDuration.value//60,
+                gb.session.experimentDuration.value%60       )
+            data += '\t'
+            # data += get('trialType'                          ) + '\t'
+            data += get('trialCount'      , '%d', 'Go'       ) + '\t'
+            data += get('trialCount'      , '%d', 'Nogo'     ) + '\t'
+            data += get('hitRate'         , '%.3f'           ) + '\t'
+            data += get('faRate'          , '%.3f'           ) + '\t'
+            # trial rate (trials per minute)
+            if i==0: data += '%.3f' % (df.trialCount.sum() /
+                gb.session.experimentDuration.value * 60     )
+            data += '\t'
+            # TMR (dB)
+            # if self.maskerLevel is not None:
+            #     data += '%g dB' % (df.targetLevel[i]-self.maskerLevel) + '\t'
+            # else:
+            data += '\t'
+            data += get('maskerFile'      , os.path.basename ) + '\t'
+            data += get('maskerLevel'     , '%g dB SPL'      ) + '\t'
+            data += get('targetFile'      , os.path.basename ) + '\t'
+            data += get('targetLevel'     , '%g dB SPL'      ) + '\t'
+            data += get('pokeDuration'    , '%.3f', 'Go'     ) + '\t'
+            data += get('pokeDuration'    , '%.3f', 'Nogo'   ) + '\t'
+            data += get('responseDuration', '%.3f', 'Go'     ) + '\t'
+            data += get('responseDuration', '%.3f', 'Nogo'   ) + '\t'
+            data += get('dPrime'          , '%.3f'           ) + '\t'
 
-        # experiment start time
-        if i==0: data += gb.experimentStart.strftime('%H:%M:%S')
-        data += '\t'
-
-        # experiment duration (mm:ss)
-        if i==0: data += '%02d:%02d' % (
-            gb.session.experimentDuration.value//60,
-            gb.session.experimentDuration.value%60)
-        data += '\t'
-
-        # trial rate (trials per minute)
-        if i==0: data += '%.3f' % (df.trialCount.sum() /
-            gb.session.experimentDuration.value * 60)
-        data += '\t'
-
-        # total reward (ml)
-        if i==0: data += '%g' % gb.session.totalReward.value
-        data += '\t'
-
-        data += get('rewardVolume'    , '%g'             ) + '\t'
-        data += get('trialType'                          ) + '\t'
-        data += get('trialCount'      , '%d'             ) + '\t'
-        data += get('hitRate'         , '%.3f'           ) + '\t'
-        data += get('faRate'          , '%.3f'           ) + '\t'
-        data += get('targetFile'      , os.path.basename ) + '\t'
-        data += get('targetLevel'     , '%g dB SPL'      ) + '\t'
-        data += get('maskerFile'      , os.path.basename ) + '\t'
-        data += get('maskerLevel'     , '%g dB SPL'      ) + '\t'
-        # if self.maskerLevel is not None:
-        #     data += '%g dB' % (df.targetLevel[i]-self.maskerLevel) + '\t'
-        # else:
-        #     data += '\t'
-        data += get('pokeDuration'    , '%.3f'     ) + '\t'
-        data += get('responseDuration', '%.3f'     ) + '\t'
-        data += get('dPrime'          , '%.3f'     ) + '\t'
-
-        # data += '\r\n'
+            data += '\r\n'
 
         QtWidgets.QApplication.clipboard().setText(data)
 
