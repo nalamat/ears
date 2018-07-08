@@ -28,22 +28,24 @@ import globals as gb
 
 log = logging.getLogger(__name__)
 
-UPDATE_DELAY    = 50e-3    # seconds
-MAX_VOLTAGE     = +10
-MIN_VOLTAGE     = -10
+UPDATE_DELAY     = 50e-3    # seconds
+MAX_VOLTAGE      = +10
+MIN_VOLTAGE      = -10
 
-digitalInput    = None
-digitalOutput   = None
-analogInput     = None
-physiologyInput = None
-analogOutput    = None
+digitalInput     = None
+digitalOutput    = None
+analogInput      = None
+physiologyInput  = None
+analogOutput     = None
+physiologyOutput = None
 
 def init():
     global digitalInput, digitalOutput, analogInput, \
-        physiologyInput, analogOutput
+        physiologyInput, analogOutput, physiologyOutput
 
     devA = 'dev1'
     devB = 'dev2'
+    physLines = 15
 
     if gb.appMode != 'Calibration':
         digitalInput = daq.DigitalInput('/%s/port0/line1:3' % devA,
@@ -58,8 +60,8 @@ def init():
 
         if gb.session.recording.value == 'Physiology':
             # slave task in sync with `analogOutput`
-            physiologyInput = daq.AnalogInput('/%s/ai1:15' % devB, 31.25e3,
-                np.inf, name='physiologyInput', dataChunk=20e-3)
+            physiologyInput = daq.AnalogInput('/%s/ai1:%d' % (devB, physLines),
+                31.25e3, np.inf, name='physiologyInput', dataChunk=20e-3)
                 # timebaseSrc='/%s/20MHzTimebase' % devA, timebaseRate=20e6,
                 # startTrigger='/%s/ao/StartTrigger' % devA)
 
@@ -80,6 +82,11 @@ def init():
 
     if config.SIM and gb.appMode != 'Calibration':
         analogOutput.connect(analogInput, [0,1,2,3])
+        if gb.session.recording.value == 'Physiology':
+            physiologyOutput = daq.AnalogOutput('/%s/ao1:%d' % (devB, physLines),
+                31.25e3, np.inf, name='physiologyOutput', dataChunk=2,
+                dataNeeded=physiologyOutputDataNeeded)
+            physiologyOutput.connect(physiologyInput, list(range(physLines)))
 
 def start():
     if gb.appMode != 'Calibration':
@@ -89,6 +96,9 @@ def start():
             physiologyInput.start()
         analogInput.start()
     analogOutput.start()    # all analog tasks actually start here
+    if config.SIM and gb.appMode != 'Calibration' and \
+            gb.session.recording.value == 'Physiology':
+        physiologyOutput.start()
 
 def stop():
     if gb.appMode != 'Calibration':
@@ -99,6 +109,9 @@ def stop():
             physiologyInput.stop()
         analogInput.stop()
     analogOutput.stop()
+    if config.SIM and gb.appMode != 'Calibration' and \
+            gb.session.recording.value == 'Physiology':
+        physiologyOutput.stop()
 
 def clear():
     if gb.appMode != 'Calibration':
@@ -108,6 +121,13 @@ def clear():
             physiologyInput.clear()
         analogInput.clear()
     analogOutput.clear()
+    if config.SIM and gb.appMode != 'Calibration' and \
+            gb.session.recording.value == 'Physiology':
+        physiologyOutput.clear()
 
 def getTS():
     return analogOutput.nsGenerated / analogOutput.fs
+
+def physiologyOutputDataNeeded(task, nsWritten, nsNeeded):
+    data = np.random.randn(task.lineCount, nsNeeded)
+    return data

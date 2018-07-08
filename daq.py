@@ -446,7 +446,7 @@ class BaseAnalog(BaseTask):
         if SIM:
             self._simStop          = threading.Event()
             self._simThread        = threading.Thread(target=self._simLoop)
-            self._simThread.daemon = True
+            # self._simThread.daemon = True
             self._simThread.start()
 
         super()._start()
@@ -1111,7 +1111,7 @@ if __name__ == '__main__':
                 out.connect(inp)
 
             thread = threading.Thread(target=monitor)
-            thread.daemon = True
+            # thread.daemon = True
             thread.start()
 
             inp.start()
