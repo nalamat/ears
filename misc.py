@@ -17,6 +17,7 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 '''
 
 import os
+import queue
 import logging
 import pathlib
 import functools
@@ -88,6 +89,13 @@ def absolutePath(file, directory=None):
     else:
         return os.path.realpath(
             os.path.join(directory, file)).replace('\\', '/')
+
+
+class Queue(queue.Queue):
+    def clear(self):
+        while not self.empty():
+            self.get()
+
 
 class Dict(dict):
     '''Extended dictionary supporting attribute-like access to values using the

@@ -19,7 +19,6 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 import os
 import copy
 import time
-import queue
 import logging
 import platform
 import functools
@@ -109,7 +108,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.updateTimer.setInterval(20)    # every 20 ms
 
         # event handling
-        self.eventQueue      = queue.Queue()
+        self.eventQueue      = misc.Queue()
         self.eventLock       = threading.Lock()
         self.eventTimerStop  = None
         self.eventTimer      = None
@@ -647,6 +646,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         self.pauseExperiment()
         self.pump.disconnect()
+        if gb.physiologyWindow:
+            log.info('Closing physiology window')
+            gb.physiologyWindow.close()
         daqs.clear()
 
     @guiHelper.showExceptions
@@ -1021,10 +1023,12 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     def analogInputDataAcquired(self, task, data):
         speaker, mic, poke, spout = data
+        # log.info('Appending analog data: %d samples', data.shape[-1])
         self.speakerTrace.append(speaker)
         self.micTrace    .append(mic    )
         self.pokeTrace   .append(poke   )
         self.spoutTrace  .append(spout  )
+        # log.info('Appended analog data')
 
     def analogOutputDataNeeded(self, task, nsWritten, nsNeeded):
         # random analog trace
@@ -1058,11 +1062,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     def startEventThread(self):
         # make sure the queue is empty before starting
-        while not self.eventQueue:
-            self.eventQueue.get()
+        self.eventQueue.clear()
         # start event processing
         self.eventThread = threading.Thread(target=self.eventLoop)
-        self.eventThread.daemon = True
+        # self.eventThread.daemon = True
         self.eventThread.start()
 
     def stopEventThread(self):
