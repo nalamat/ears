@@ -245,9 +245,14 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
     # GUI callbacks
     def closeEvent(self, event):
-        if event.spontaneous:
+        if event.spontaneous():
+            log.debug('Ignoring spontaneous close event on physiology window')
             event.ignore()
             return
+        # log.debug('Stopping physiology plot')
+        # self.plot.stop()
+        # event.accept()
+        # log.debug('Stopped physiology plot')
 
     @guiHelper.showExceptions
     def paradigmChanged(self, item):
