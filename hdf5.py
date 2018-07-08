@@ -16,27 +16,57 @@ You should have received a copy of the GNU General Public License along with
 this program. If not, see <http://www.gnu.org/licenses/>.
 '''
 
+import queue
 import logging
+import functools
 import threading
-import tables    as tb
+# import multiprocessing
+import tables          as tb
+
+import misc
 
 
 log   = logging.getLogger(__name__)
 
-_fh    = None
-_lock  = threading.Lock()
-_nodes = {}
+_fh      = None
+_lock    = threading.Lock()
+_nodes   = {}
+# _queue   = misc.Queue()
+# _stop    = threading.Event()
+# _thread  = None
+
+# def runInThread(func):
+#     @functools.wraps(func)
+#     def wrapper(*args, **kwargs):
+#         if threading.current_thread() == _thread:
+#             # log.info('################# In current thread: %s' % func)
+#             return func(*args, **kwargs)
+#         else:
+#             # log.info('################# In another thread: %s' % func)
+#             _queue.put((func, args, kwargs))
+#
+#     return wrapper
 
 def open(*args, **kwargs):
-    global _fh
+    global _fh, _thread
     with _lock:
         if _fh is not None:
             raise IOError('Another HDF5 file is open')
         log.info('Opening HDF5 file "%s"' % args[0])
         _fh = tb.open_file(*args, **kwargs)
+        # _stop.clear()
+        # _thread = threading.Thread(target=_loop, args=(_stop,_queue))
+        # _thread.daemon = True
+        # log.info('Starting HDF5 thread')
+        # _thread.start()
 
 def close():
     global _fh
+    log.info('Stopping HDF5 thread')
+    # _stop.set()
+    # if _thread:
+    #     while _thread.is_alive():
+    #         _thread.join(.1)
     with _lock:
         _nodes.clear()
         if _fh is not None:
@@ -44,6 +74,7 @@ def close():
             _fh.close()
             _fh = None
 
+# @runInThread
 def flush():
     with _lock:
         _checkFile()
@@ -69,6 +100,7 @@ def createTable(node, *args, **kwargs):
         _nodes[node] = _fh.create_table(path, name, *args,
             createparents=True, **kwargs)
 
+# @runInThread
 def appendTable(node, data):
     '''
     Args:
@@ -83,12 +115,13 @@ def appendTable(node, data):
             row[key] = value
         row.append()
 
+# @runInThread
 def clearTable(node):
     with _lock:
         if node not in _nodes:
             raise ValueError('Specified node %s doesn\'t exist' % node)
 
-        _nodes[node].flush()
+        # _nodes[node].flush()
         _nodes[node].remove_rows(0, _nodes[node].nrows)
 
 def createEArray(node, *args, **kwargs):
@@ -99,6 +132,7 @@ def createEArray(node, *args, **kwargs):
         _nodes[node] = _fh.create_earray(path, name, *args,
             createparents=True, **kwargs)
 
+# @runInThread
 def appendArray(node, data):
     '''
     Args:
@@ -125,6 +159,23 @@ def _parseNode(node):
 def _checkFile():
     if _fh is None:
         raise IOError('No open HDF5 file')
+
+# def _loop(_stop, _queue):
+#     log.info('Starting HFD5 loop')
+#
+#     try:
+#         # with nogil:
+#             while not _stop.wait(.1):
+#                 while not _queue.empty():
+#                     log.info('Fetching from queue')
+#                     (func, args, kwargs) = _queue.get()
+#                     log.info('Executing function %s', func)
+#                     func(*args, **kwargs)
+#                     log.info('Executed function %s', func)
+#     except:
+#         log.exception('')
+#
+#     log.info('Stopping HFD5 loop')
 
 
 if __name__ == '__main__':
