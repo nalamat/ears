@@ -32,7 +32,8 @@ import hdf5
 
 
 log = logging.getLogger(__name__)
-filters = tb.Filters(complevel=9, ) #complib='blosc')
+# default compression 'zlib' is too slow for storage of physiology
+filters = tb.Filters(complevel=9, complib='blosc')
 
 
 # imports for Axis
@@ -487,6 +488,8 @@ class ChannelPlotWidget(pg.PlotWidget):
 
     def updatePlot(self):
         try:
+            # log.info('Updating plot')
+
             # calculate actual fps
             updateTime = (dt.datetime.now()-self._updateLast).total_seconds()
             self._updateTimes.append(updateTime)
@@ -703,6 +706,7 @@ class AnalogChannel(BaseChannel):
 
         buffer1Size       = int(self.plotWidget.xRange*self.fs    *1.2)
         buffer2Size       = int(self.plotWidget.xRange*self.fsPlot*1.2)
+        # self._bufferX     = misc.CircularBuffer((lineCount, buffer1Size))
         self._buffer1     = misc.CircularBuffer((lineCount, buffer1Size))
         self._buffer2     = misc.CircularBuffer((lineCount, buffer2Size))
 
@@ -808,6 +812,10 @@ class AnalogChannel(BaseChannel):
         # dump new data to HDF5 file
         if self._hdf5Node is not None:
             hdf5.appendArray(self._hdf5Node, data.transpose())
+            # if self._bufferX.nsAvailable+data.shape[-1]>self._bufferX.shape[-1]:
+            #     oldData = self._bufferX.read()
+            #     hdf5.appendArray(self._hdf5Node, oldData.transpose())
+            # self._bufferX.write(data)
 
         # keep a local copy of data in a circular buffer
         # for online processing and fast plotting
