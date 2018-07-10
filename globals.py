@@ -33,8 +33,8 @@ sessionTimeComplete = sessionTime.strftime(config.DATETIME_FMT_MORE)
 
 experimentStart     = None
 
-# behaviorWindow      = None
-# physiologyWindow    = None
+behaviorWindow      = None
+physiologyWindow    = None
 
 syringeDiameters    = {'B-D 10cc': 14.43, 'B-D 20cc': 19.05,
     'B-D 30cc': 21.59, 'B-D 60cc': 26.59}
