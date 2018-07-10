@@ -413,8 +413,11 @@ class SetupWindow(QtWidgets.QDialog):
         subjectID = self.subjectID.currentText()
         self.subjectID.clear()
         if os.path.isdir(dataDir):
-            subjectIDs = next(os.walk(dataDir))[1]
-            self.subjectID.addItems(subjectIDs)
+            try:
+                subjectIDs = next(os.walk(dataDir))[1]
+                self.subjectID.addItems(subjectIDs)
+            except:
+                pass
         self.subjectID.setCurrentText(subjectID)
 
     @guiHelper.showExceptions
