@@ -16,3 +16,4 @@ x should Context.clearValues set all items to type()? what about np.nan?
 + activate pump
 + log pump
 - add _nsOffset to daq.AnalogInput
+- migrate plotting subsystem to vispy and gloo
