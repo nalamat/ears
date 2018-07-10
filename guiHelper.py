@@ -80,12 +80,12 @@ def logExceptions(func):
     return wrapper
 
 
-def showQuestion(text1, text2=None):
+def showQuestion(text1, text2=None, title=config.APP_NAME):
     msg = QtWidgets.QMessageBox()
     msg.setIcon(QtWidgets.QMessageBox.Question)
     msg.setText(text1)
     if text2: msg.setInformativeText(text2)
-    msg.setWindowTitle('Error')
+    msg.setWindowTitle(title)
     msg.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
     msg.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
