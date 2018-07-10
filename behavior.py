@@ -2172,6 +2172,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     # show user-entered float values as they are
                     if item.name in gb.paradigm.rove.value:
                         text = '%g' % item.value
+                    elif item.name=='trialStart':
+                        text = '%02d:%05.2f' % (item.value//60, item.value%60)
                     # show calculated float values with 2 decimal points
                     else:
                         text = '%.2f' % item.value
