@@ -801,7 +801,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # transfer paradigm values to widgets
         self.paradigm.revertWidgetValues()
 
-        if gb.status.experimentState == 'Running':
+        if gb.status.experimentState.value == 'Running':
             # evaluate right away if no trials ongoing
             if gb.status.trialState.value in gb.trialStatesAwaiting:
                 res = self.evaluateParadigm()
@@ -852,7 +852,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Go remind'
 
-        if gb.status.experimentState == 'Running':
+        if gb.status.experimentState.value == 'Running':
             # evaluate right away if no trials ongoing
             if gb.status.trialState.value in gb.trialStatesAwaiting:
                 self.evaluateParadigm()
@@ -866,7 +866,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Nogo remind'
 
-        if gb.status.experimentState == 'Running':
+        if gb.status.experimentState.value == 'Running':
             # evaluate right away if no trials ongoing
             if gb.status.trialState.value in gb.trialStatesAwaiting:
                 self.evaluateParadigm()
