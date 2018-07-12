@@ -19,7 +19,9 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 import os
 import sys
 import logging
-
+import numpy   as     np
+import pandas  as     pd
+from   numpy   import nan
 
 SIM               = '--sim' in sys.argv
 
@@ -74,3 +76,11 @@ BORDER_STYLE      = '1px solid rgb(185,185,185)'
 DAQ_A             = 'dev1'   # all analog/digital input/output except physiology
 DAQ_B             = 'dev2'   # only physiology analog input
 ELECTRODE_COUNT   = 15
+ELECTRODE_MAP     = pd.DataFrame({
+                    'A': [15, 13,   8,  9],
+                    'B': [10, 12,  11, 14],
+                    'C': [ 2,  4, nan,  5],
+                    'D': [ 3,  1,   7,  6]},
+                    ['IV','III','II','I'], dtype=object)
+ELECTRODE_SHANKS  = list(ELECTRODE_MAP.keys())
+ELECTRODE_DEPTHS  = list(ELECTRODE_MAP.index)
