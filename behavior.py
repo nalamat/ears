@@ -32,13 +32,13 @@ import datetime         as     dt
 from   PyQt5            import QtCore, QtWidgets, QtGui
 
 import daq
+import gui
 import daqs
 import hdf5
 import misc
 import pump
 import config
 import plotting
-import guiHelper
 import globals          as     gb
 
 
@@ -256,7 +256,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         for (name, label) in buttonList:
             if name == '|':
                 # add vertical separator line
-                layout.addWidget(guiHelper.QVSeparator())
+                layout.addWidget(gui.QVSeparator())
             else:
                 # generate and add button
                 btn = QtWidgets.QToolButton()
@@ -437,7 +437,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     if item.name in ['targetFile', 'maskerFile']:
                         # make a small button for open file dialog
                         h = wig.sizeHint().height()
-                        wig2 = guiHelper.makeFileButton('Select file')
+                        wig2 = gui.makeFileButton('Select file')
                         wig2.clicked.connect(
                             functools.partial(self.paradigmButtonClicked, item))
                 elif item.type == bool:
@@ -629,14 +629,14 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     ########################################
     # GUI callbacks
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def closeEvent(self, event):
         # if event.spontaneous()
         if gb.status.trialState.value not in gb.trialStatesAwaiting:
-            res = guiHelper.showQuestion('Are you sure you want to quit?',
+            res = gui.showQuestion('Are you sure you want to quit?',
                 'There is a trial in progress!')
         elif gb.status.experimentState.value == 'Running':
-            res = guiHelper.showQuestion('Are you sure you want to quit?',
+            res = gui.showQuestion('Are you sure you want to quit?',
                 'Experiment is still running!')
         else:
             res = True
@@ -652,7 +652,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             gb.physiologyWindow.close()
         daqs.clear()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def keyPressEvent(self, event):
         # when an editable widget has focus do not act on key presses
         wig = QtWidgets.QApplication.focusWidget()
@@ -675,12 +675,12 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 gb.status.experimentState.value == 'Running'):
             self.pauseExperiment()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def sessionChanged(self, item, *args):
         item.value = item.getWidgetValue()
         gb.session.overwriteData()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def paradigmChanged(self, item, *args):
         # if item.name == 'targetType':
         #     tone = item.getWidgetValue() == 'Tone'
@@ -703,7 +703,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             self.buttons.apply .setEnabled(hasChanged)
             self.buttons.revert.setEnabled(hasChanged)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def paradigmButtonClicked(self, item, *args):
         if item.name in ['targetFile', 'maskerFile']:
             file     = item.getWidgetValue()
@@ -712,7 +712,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 file = misc.absolutePath(file, stimDir)
             else:
                 file = stimDir
-            file     = guiHelper.openFile('Sound (*.wav)', file)
+            file     = gui.openFile('Sound (*.wav)', file)
 
             if not file:
                 return
@@ -722,7 +722,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             item.widget.setText(file.replace('\\','/'))
             self.paradigmChanged(item)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def roveAddClicked(self, *args):
         value = self.paradigm.rove.getWidgetValue()
         for name in value:
@@ -730,7 +730,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.paradigm.rove.setWidgetValue(value)
         self.paradigmChanged(self.paradigm.rove)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def roveRemoveClicked(self, *args):
         wig = self.paradigm.rove.widget
         rows = wig.rowCount()
@@ -739,7 +739,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             wig.removeRow(r)
             self.paradigmChanged(self.paradigm.rove)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def applyClicked(self, *args):
         # keep a copy of the old paradigm
         paradigmOld = self.paradigm.copy()
@@ -759,7 +759,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         else:
             paradigmOld.copyTo(self.paradigm)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def revertClicked(self, *args):
         # transfer paradigm values to widgets
         self.paradigm.revertWidgetValues()
@@ -767,7 +767,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.buttons.apply .setEnabled(False)
         self.buttons.revert.setEnabled(False)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def loadClicked(self, *args):
         file     = gb.session.paradigmFile.value
         dataDir  = gb.session.dataDir.value
@@ -775,7 +775,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.openFile(config.SETTINGS_FILTER, file)
+        file     = gui.openFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -815,7 +815,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             else:
                 paradigmOld.copyTo(self.paradigm)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def saveClicked(self, *args):
         file     = gb.session.paradigmFile.value
         dataDir  = gb.session.dataDir.value
@@ -823,7 +823,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.saveFile(config.SETTINGS_FILTER, file)
+        file     = gui.saveFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -834,21 +834,21 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         file = misc.relativePath(file, dataDir)
         gb.session.paradigmFile.value = file
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def startClicked(self, *args):
         self.startExperiment()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def pauseClicked(self, *args):
         if gb.status.trialState.value not in gb.trialStatesAwaiting:
-            res = guiHelper.showQuestion('Are you sure you want to pause?',
+            res = gui.showQuestion('Are you sure you want to pause?',
                 'There is a trial in progress!')
             if not res:
                 return
 
         self.pauseExperiment()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def goClicked(self, *args):
         log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Go remind'
@@ -862,7 +862,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         else:
             gb.status.trialType.value = self.forceTrialType
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def nogoClicked(self, *args):
         log.info('Forcing trial type "Go remind"')
         self.forceTrialType = 'Nogo remind'
@@ -876,7 +876,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         else:
             gb.status.trialType.value = self.forceTrialType
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def trialClicked(self, *args):
         log.info('Triggering trial manually')
         if gb.status.trialState.value not in gb.trialStatesAwaiting:
@@ -885,22 +885,22 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             return
         self.startTrial()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def targetClicked(self, *args):
         log.info('Triggering target manually')
         self.triggerTarget()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def pumpClicked(self, *args):
         log.info('Triggering pump manually')
         self.triggerPump()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def timeoutClicked(self, *args):
         log.info('Triggering timeout manually')
         self.triggerTimeout()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def exportClicked(self, *args):
         # example format: '36:15\t22\r\n\t30\r\n\t23\r\n\t40\r\n\t17'
         df        = gb.performance.dataFrame
@@ -991,23 +991,23 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         QtWidgets.QApplication.clipboard().setText(data)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def closeClicked(self, *args):
         # if gb.status.experimentState.value == 'Running':
-        #     res = guiHelper.showQuestion('Are you sure you want to quit?',
+        #     res = gui.showQuestion('Are you sure you want to quit?',
         #         'Experiment is still running!')
         #     if not res:
         #         return
         self.close()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def digitalInputClicked(self, *args):
         data = [None] * len(self.buttons.digitalInput)
         for i in range(len(self.buttons.digitalInput)):
             data[i] = self.buttons.digitalInput[i].isChecked()
         daqs.digitalInput.write(data)
 
-    @guiHelper.logExceptions
+    @gui.logExceptions
     def updateGUI(self):
         '''Called by `updateTimer` every 20ms.'''
         ts = daqs.getTS()
@@ -1080,7 +1080,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.stopEventTimer()
         self.eventThreadStop.clear()
 
-    @guiHelper.logExceptions
+    @gui.logExceptions
     def eventLoop(self):
         log.debug('Starting event thread')
 
@@ -1096,7 +1096,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         log.debug('Stopping event thread')
 
-    @guiHelper.logExceptions
+    @gui.logExceptions
     def handleEvent(self, event, ts):
         # prase events from `digitalInputEdgeDetected`
         if isinstance(event, tuple):
@@ -1314,7 +1314,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         if self.eventTimer:
             self.eventTimer.cancel()
 
-    @guiHelper.logExceptions
+    @gui.logExceptions
     def eventTimerCallback(self, eventTimerStop, event):
         # this lock prevents events from the event timer being added
         # to the queue while previous event is already being handled
@@ -1330,7 +1330,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     ########################################
     # experiment control
 
-    @guiHelper.busyCursor
+    @gui.busyCursor
     def startExperiment(self):
         if not self.evaluateParadigm(): return
 
@@ -1377,7 +1377,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             for btn in self.buttons.digitalInput:
                 btn.setEnabled(True)
 
-    @guiHelper.busyCursor
+    @gui.busyCursor
     def pauseExperiment(self):
         log.info('Pausing experiment')
 
@@ -1898,7 +1898,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             func(*args, **kwargs)
         except:
             log.exception('')
-            guiHelper.showException()
+            gui.showException()
         finally:
             event.set()
 
@@ -2147,9 +2147,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         except Exception as e:
             log.exception('')
             if threading.current_thread() == self.guiThread:
-                guiHelper.showException()
+                gui.showException()
             else:
-                self.runInGUIThread(guiHelper.showException, False, [e])
+                self.runInGUIThread(gui.showException, False, [e])
 
             return False
 

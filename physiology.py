@@ -27,12 +27,12 @@ import scipy.stats
 import numpy       as     np
 from   PyQt5       import QtCore, QtWidgets, QtGui
 
+import gui
 import daqs
 import misc
 import hdf5
 import config
 import plotting
-import guiHelper
 import globals     as gb
 
 
@@ -170,7 +170,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         for (name, label) in buttonList:
             if name == '|':
                 # add vertical separator line
-                layout.addWidget(guiHelper.QVSeparator())
+                layout.addWidget(gui.QVSeparator())
             else:
                 # generate and add button
                 btn = QtWidgets.QToolButton()
@@ -329,7 +329,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # event.accept()
         # log.debug('Stopped physiology plot')
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def applyClicked(self, *args):
         # get values from widgets
         self.physiologyTrace.refreshBlock   = True
@@ -343,49 +343,49 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.physiologyTrace.refreshBlock = False
         self.physiologyTrace.refresh()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def sldYScaleValueChanged(self, value):
         self.lblYScale  .setText('Scale: %d dB'         % value)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def sldFilterFLValueChanged(self, value):
         self.lblFlFilter.setText('Lower cutoff: %d Hz'  % value)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def sldFilterFHValueChanged(self, value):
         self.lblFhFilter.setText('Higher cutoff: %d Hz' % value)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def chkAllChanged(self, index, *args):
         state = self.chkAll[index].checkState()
         for chk in self.chkShanks:
-            guiHelper.setCheckState(chk[index], state)
+            gui.setCheckState(chk[index], state)
         for chk in self.chkDepths:
-            guiHelper.setCheckState(chk[index], state)
+            gui.setCheckState(chk[index], state)
         for chk in self.chkElecs:
-            guiHelper.setCheckState(chk[index], state)
+            gui.setCheckState(chk[index], state)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def chkShanksChanged(self, shank, index, *args):
         state = self.chkShanks[shank][index].checkState()
         for elec in config.ELECTRODE_MAP.iloc[:,shank]:
             if np.isnan(elec): continue
-            guiHelper.setCheckState(self.chkElecs[elec-1][index], state)
+            gui.setCheckState(self.chkElecs[elec-1][index], state)
         self.refreshCheckBoxes()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def chkDepthsChanged(self, depth, index, *args):
         state = self.chkDepths[depth][index].checkState()
         for elec in config.ELECTRODE_MAP.iloc[depth,:]:
             if np.isnan(elec): continue
-            guiHelper.setCheckState(self.chkElecs[elec-1][index], state)
+            gui.setCheckState(self.chkElecs[elec-1][index], state)
         self.refreshCheckBoxes()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def chkElecsChanged(self, elec, index, *args):
         self.refreshCheckBoxes()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def updateGUI(self):
         '''Called by `updateTimer` every 50ms'''
         # settings.status.ts .value = '%.2f' % self.getTS()
@@ -423,19 +423,19 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             return QtCore.Qt.Checked
 
         for index in range(2):
-            guiHelper.setCheckState(self.chkAll[index],
+            gui.setCheckState(self.chkAll[index],
                 getState(config.ELECTRODE_MAP.values.flatten()))
             for shank in range(len(self.chkShanks)):
-                guiHelper.setCheckState(self.chkShanks[shank][index],
+                gui.setCheckState(self.chkShanks[shank][index],
                     getState(config.ELECTRODE_MAP.iloc[:,shank]))
             for depth in range(len(self.chkDepths)):
-                guiHelper.setCheckState(self.chkDepths[depth][index],
+                gui.setCheckState(self.chkDepths[depth][index],
                     getState(config.ELECTRODE_MAP.iloc[depth,:]))
 
 
 # playground
 if __name__ == '__main__':
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def do():
         raise ValueError('something')
 

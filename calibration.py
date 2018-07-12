@@ -23,12 +23,12 @@ import numpy            as     np
 import scipy            as     sp
 from   PyQt5            import QtCore, QtWidgets, QtGui
 
+import gui
 import daqs
 import misc
 import config
 import context
 import platform
-import guiHelper
 import globals          as     gb
 
 
@@ -79,7 +79,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
         for name in buttonList:
             if name == '|':
                 # add vertical separator line
-                layout.addWidget(guiHelper.QVSeparator())
+                layout.addWidget(gui.QVSeparator())
             else:
                 # generate and add button
                 btn = QtWidgets.QToolButton()
@@ -138,12 +138,12 @@ class CalibrationWindow(QtWidgets.QMainWindow):
 
         return frame
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def closeEvent(self, event):
         daqs.stop()
         daqs.clear()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def loadClicked(self, *args):
         file     = gb.session.calibrationFile.value
         dataDir  = gb.session.dataDir.value
@@ -151,7 +151,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.openFile(config.SETTINGS_FILTER, file)
+        file     = gui.openFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -170,7 +170,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
 
         self.updateCal()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def saveClicked(self, *args):
         file     = gb.session.calibrationFile.value
         dataDir  = gb.session.dataDir.value
@@ -178,7 +178,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.saveFile(config.SETTINGS_FILTER, file)
+        file     = gui.saveFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -190,7 +190,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
         gb.session.calibrationFile.value = file
         gb.session.saveFile(config.LAST_SESSION_FILE)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def startClicked(self, *args):
         if not self.active:
             self.active = True
@@ -199,7 +199,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
             self.buttons.start.setEnabled(False)
             self.buttons.pause.setEnabled(True)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def pauseClicked(self, *args):
         if self.active:
             self.active = False
@@ -207,21 +207,21 @@ class CalibrationWindow(QtWidgets.QMainWindow):
             self.buttons.start.setEnabled(True)
             self.buttons.pause.setEnabled(False)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def closeClicked(self, *args):
         self.close()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def fileChanged(self, *args):
         self.updateSound()
         self.updateCal()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def ampChanged(self, *args):
         self.updateSound()
         self.updateCal()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def calChanged(self, *args):
         try:
             value = float(self.txtCal.text())-self.spnAmp.value()
@@ -312,7 +312,7 @@ class CalibrationWindow(QtWidgets.QMainWindow):
                 newAmp = self.spnAmp.value()
             except:
                 log.exception('')
-                guiHelper.showException()
+                gui.showException()
                 data = None
 
         fs = daqs.analogOutput.fs

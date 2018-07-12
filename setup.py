@@ -23,9 +23,9 @@ import numpy      as     np
 import datetime   as     dt
 from   PyQt5      import QtCore, QtWidgets, QtGui
 
+import gui
 import misc
 import config
-import guiHelper
 import globals    as     gb
 
 
@@ -43,7 +43,7 @@ class SetupWindow(QtWidgets.QDialog):
         self.dataDir.textEdited.connect(self.dataDirChanged)
         h = self.dataDir.sizeHint().height()
 
-        self.dataDirButton = guiHelper.makeFileButton('Select data directory')
+        self.dataDirButton = gui.makeFileButton('Select data directory')
         self.dataDirButton.clicked.connect(self.dataDirButtonClicked)
 
         dataDirectoryLayout = QtWidgets.QHBoxLayout()
@@ -88,7 +88,7 @@ class SetupWindow(QtWidgets.QDialog):
             self.dataFile.setText(gb.session.dataFile.value)
             self.dataFile.setCursorPosition(0)
 
-        self.dataFileButton = guiHelper.makeFileButton('Select data file')
+        self.dataFileButton = gui.makeFileButton('Select data file')
         self.dataFileButton.clicked.connect(self.dataFileButtonClicked)
         if gb.session.autoDataFile.value:
             self.dataFileButton.setEnabled(False)
@@ -102,7 +102,7 @@ class SetupWindow(QtWidgets.QDialog):
         calibrationFile = misc.relativePath(calibrationFile, dataDir)
         self.calibrationFile = QtWidgets.QLineEdit(calibrationFile)
 
-        self.calibrationFileButton = guiHelper.makeFileButton(
+        self.calibrationFileButton = gui.makeFileButton(
             'Select calibration file')
         self.calibrationFileButton.clicked.connect(
             self.calibrationFileButtonClicked)
@@ -119,7 +119,7 @@ class SetupWindow(QtWidgets.QDialog):
         self.paradigmFile.setCurrentText(paradigmFile)
         self.paradigmFile.currentTextChanged.connect(self.paradigmFileChanged)
 
-        self.paradigmFileButton = guiHelper.makeFileButton(
+        self.paradigmFileButton = gui.makeFileButton(
             'Select paradigm file')
         self.paradigmFileButton.clicked.connect(self.paradigmFileButtonClicked)
 
@@ -196,7 +196,7 @@ class SetupWindow(QtWidgets.QDialog):
         # self.raise_()
         # self.activateWindow()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def accept(self):
         dataDir = misc.absolutePath(self.dataDir.text())
 
@@ -204,25 +204,25 @@ class SetupWindow(QtWidgets.QDialog):
         dataFile = misc.absolutePath(self.dataFile.text(), dataDir)
         if gb.appMode == 'Experiment':
             if not dataFile:
-                guiHelper.showError(
+                gui.showError(
                     'Entered data file is not valid',
                     'File path cannot be empty')
                 return
             dir_, file = os.path.split(dataFile)
             if dir_ and not os.path.isdir(dir_):
-                res = guiHelper.showQuestion(
+                res = gui.showQuestion(
                     'Directory "%s" doesn\'t exist' % dir_,
                     'Would you like to create it?')
                 if not res: return
                 os.makedirs(dir_)
             fileName, fileExt = os.path.splitext(file)
             if fileExt != config.DATA_EXT:
-                guiHelper.showError(
+                gui.showError(
                     'Entered data file extension is not valid',
                     'Please change the extension to "%s"' % config.DATA_EXT)
                 return
             if os.path.isfile(dataFile):
-                guiHelper.showError(
+                gui.showError(
                     'Entered data file already exists',
                     'Please enter a different file path')
                 return
@@ -232,7 +232,7 @@ class SetupWindow(QtWidgets.QDialog):
         if calibrationFile:
             calibrationFile = misc.absolutePath(calibrationFile, dataDir)
             if not os.path.isfile(calibrationFile):
-                guiHelper.showError(
+                gui.showError(
                     'Entered calibration file doesn\'t exist',
                     'Please enter a different file path')
                 return
@@ -242,7 +242,7 @@ class SetupWindow(QtWidgets.QDialog):
         if paradigmFile and gb.appMode == 'Experiment':
             paradigmFile = misc.absolutePath(paradigmFile, dataDir)
             if not os.path.isfile(paradigmFile):
-                guiHelper.showError(
+                gui.showError(
                     'Entered paradigm file doesn\'t exist',
                     'Please enter a different file path')
                 return
@@ -255,7 +255,7 @@ class SetupWindow(QtWidgets.QDialog):
                 if item.checkState() == QtCore.Qt.Checked:
                     rove += [self.roveParams[i]]
             if not rove and gb.appMode == 'Experiment':
-                guiHelper.showError(
+                gui.showError(
                     'No rove parameters selected',
                     'Please select at least one parameter')
                 return
@@ -280,16 +280,16 @@ class SetupWindow(QtWidgets.QDialog):
 
         super().accept()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def dataDirChanged(self, *args):
         self.loadSubjectIDs()
         self.loadParadigmFiles()
         self.updateDataFile()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def dataDirButtonClicked(self, *args):
         dataDir = self.dataDir.text()
-        dataDir = guiHelper.openDirectory(dataDir)
+        dataDir = gui.openDirectory(dataDir)
 
         if not dataDir:
             return
@@ -298,7 +298,7 @@ class SetupWindow(QtWidgets.QDialog):
         self.dataDir.setText(dataDir)
         self.dataDir.textEdited.emit(dataDir)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def autoDataFileChanged(self, state, *args):
         if state == QtCore.Qt.Checked:
             self.dataFile.setReadOnly(True)
@@ -308,7 +308,7 @@ class SetupWindow(QtWidgets.QDialog):
             self.dataFile.setReadOnly(False)
             self.dataFileButton.setEnabled(True)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def dataFileButtonClicked(self, *args):
         file     = self.dataFile.text()
         dataDir  = self.dataDir.text()
@@ -316,7 +316,7 @@ class SetupWindow(QtWidgets.QDialog):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.saveFile(config.DATA_FILTER, file)
+        file     = gui.saveFile(config.DATA_FILTER, file)
 
         if not file:
             return
@@ -324,7 +324,7 @@ class SetupWindow(QtWidgets.QDialog):
         file = misc.relativePath(file, dataDir)
         self.dataFile.setText(file)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def calibrationFileButtonClicked(self, *args):
         file     = self.calibrationFile.text()
         dataDir  = self.dataDir.text()
@@ -332,7 +332,7 @@ class SetupWindow(QtWidgets.QDialog):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.openFile(config.SETTINGS_FILTER, file)
+        file     = gui.openFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -340,14 +340,14 @@ class SetupWindow(QtWidgets.QDialog):
         file = misc.relativePath(file, dataDir)
         self.calibrationFile.setText(file)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def paradigmFileChanged(self, text, *args):
         if text:
             self.rove.setEnabled(False)
         else:
             self.rove.setEnabled(True)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def paradigmFileButtonClicked(self, *args):
         file     = self.paradigmFile.currentText()
         dataDir  = self.dataDir.text()
@@ -355,7 +355,7 @@ class SetupWindow(QtWidgets.QDialog):
             file = misc.absolutePath(file, dataDir)
         else:
             file = dataDir
-        file     = guiHelper.openFile(config.SETTINGS_FILTER, file)
+        file     = gui.openFile(config.SETTINGS_FILTER, file)
 
         if not file:
             return
@@ -363,12 +363,12 @@ class SetupWindow(QtWidgets.QDialog):
         file = misc.relativePath(file, dataDir)
         self.paradigmFile.setCurrentText(file)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def okClicked(self, *args):
         gb.appMode = 'Experiment'
         self.accept()
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def calibrationClicked(self, *args):
         gb.appMode = 'Calibration'
         self.accept()
@@ -407,7 +407,7 @@ class SetupWindow(QtWidgets.QDialog):
     #             checkState = QtCore.Qt.Unchecked
     #         self.rove.item(i).setCheckState(checkState)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def loadSubjectIDs(self, *args):
         dataDir = self.dataDir.text()
         subjectID = self.subjectID.currentText()
@@ -420,7 +420,7 @@ class SetupWindow(QtWidgets.QDialog):
                 pass
         self.subjectID.setCurrentText(subjectID)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def loadParadigmFiles(self, *args):
         dataDir      = self.dataDir.text()
         paradigmFile = self.paradigmFile.currentText()
@@ -437,7 +437,7 @@ class SetupWindow(QtWidgets.QDialog):
             self.paradigmFile.addItems(paradigmFiles)
         self.paradigmFile.setCurrentText(paradigmFile)
 
-    @guiHelper.showExceptions
+    @gui.showExceptions
     def updateDataFile(self, *args):
         if self.autoDataFile.checkState() == QtCore.Qt.Checked:
             dataFile = os.path.join(

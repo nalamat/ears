@@ -28,11 +28,11 @@ if __name__=='__main__':
 
     warnings.filterwarnings('ignore', category=FutureWarning, module='h5py')
 
+    import gui
     import hdf5
     import setup
     import config
     import behavior
-    import guiHelper
     import physiology
     import calibration
     import globals     as gb
@@ -101,7 +101,7 @@ if __name__=='__main__':
         # open session setup window
         log.info('Opening setup window')
         setupWindow = setup.SetupWindow()
-        guiHelper.centerWindow(setupWindow)
+        gui.centerWindow(setupWindow)
         res = setupWindow.exec_()
 
         if res != QtWidgets.QDialog.Accepted:
@@ -115,7 +115,7 @@ if __name__=='__main__':
         if gb.appMode == 'Calibration':
             log.info('Opening calibration window')
             calibrationWindow = calibration.CalibrationWindow()
-            guiHelper.centerWindow(calibrationWindow)
+            gui.centerWindow(calibrationWindow)
             calibrationWindow.show()
 
         elif gb.appMode == 'Experiment':
@@ -155,14 +155,14 @@ if __name__=='__main__':
             log.info('Opening behavior window')
             gb.behaviorWindow = behavior.BehaviorWindow()
             gb.behaviorWindow.show()
-            guiHelper.centerWindow(gb.behaviorWindow)
+            gui.centerWindow(gb.behaviorWindow)
 
             if gb.session.recording.value == 'Physiology':
                 # open physiology window
                 log.info('Opening physiology window')
                 gb.physiologyWindow = physiology.PhysiologyWindow()
                 gb.physiologyWindow.show()
-                guiHelper.centerWindow(gb.physiologyWindow, -2)
+                gui.centerWindow(gb.physiologyWindow, -2)
 
             # set focus to behavior window
             gb.behaviorWindow.activateWindow()
@@ -186,7 +186,7 @@ if __name__=='__main__':
             traceback.print_exc()
 
         if 'app' in dir() and app:
-            guiHelper.showException()
+            gui.showException()
 
     finally:
         hdf5.close()
