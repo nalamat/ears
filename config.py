@@ -70,3 +70,7 @@ COLOR_PUMP        = (  0,   0, 255, 100)
 COLOR_TIMEOUT     = (  0,   0,   0, 100)
 
 BORDER_STYLE      = '1px solid rgb(185,185,185)'
+
+DAQ_A             = 'dev1'   # all analog/digital input/output except physiology
+DAQ_B             = 'dev2'   # only physiology analog input
+ELECTRODE_COUNT   = 15

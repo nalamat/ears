@@ -43,16 +43,12 @@ def init():
     global digitalInput, digitalOutput, analogInput, \
         physiologyInput, analogOutput, physiologyOutput
 
-    devA = 'dev1'
-    devB = 'dev2'
-    physLines = 15
-
     if gb.appMode != 'Calibration':
-        digitalInput = daq.DigitalInput('/%s/port0/line1:3' % devA,
+        digitalInput = daq.DigitalInput('/%s/port0/line1:3' % config.DAQ_A,
             name='digitalInput', getTS=getTS,
             lineNames=['spout', 'poke', 'button'])
 
-        digitalOutput = daq.DigitalOutput('/%s/port1/line1' % devA,
+        digitalOutput = daq.DigitalOutput('/%s/port1/line1' % config.DAQ_A,
             name='digitalOutput', initialState=1)
         digitalOutput.start()
         digitalOutput.write(1)    # turn the light on
@@ -60,33 +56,35 @@ def init():
 
         if gb.session.recording.value == 'Physiology':
             # slave task in sync with `analogOutput`
-            physiologyInput = daq.AnalogInput('/%s/ai1:%d' % (devB, physLines),
-                31.25e3, np.inf, name='physiologyInput', dataChunk=20e-3)
-                # timebaseSrc='/%s/20MHzTimebase' % devA, timebaseRate=20e6,
-                # startTrigger='/%s/ao/StartTrigger' % devA)
+            physiologyInput = daq.AnalogInput('/%s/ai1:%d' % (config.DAQ_B,
+                config.ELECTRODE_COUNT), 31.25e3, np.inf,
+                name='physiologyInput', dataChunk=20e-3, timebaseRate=20e6,
+                timebaseSrc='/%s/20MHzTimebase' % config.DAQ_A,
+                startTrigger='/%s/ao/StartTrigger' % config.DAQ_A)
 
             # slave task in sync with `analogOutput`
-        analogInput = daq.AnalogInput('/%s/ai0:3' % devA, 20e3, np.inf,
+        analogInput = daq.AnalogInput('/%s/ai0:3' % config.DAQ_A, 20e3, np.inf,
             name='analogInput', dataChunk=10e-3,
-            timebaseSrc='/%s/20MHzTimebase' % devA,
-            startTrigger='/%s/ao/StartTrigger' % devA)
+            timebaseSrc='/%s/20MHzTimebase' % config.DAQ_A,
+            startTrigger='/%s/ao/StartTrigger' % config.DAQ_A)
 
     # master task
     if config.SIM and gb.appMode != 'Calibration':
-        lines = '/%s/ao0:3' % devA
+        lines = '/%s/ao0:3' % config.DAQ_A
     else:
-        lines = '/%s/ao0' % devA
+        lines = '/%s/ao0' % config.DAQ_A
     analogOutput = daq.AnalogOutput(lines, 100e3, np.inf,
         name='analogOutput', dataChunk=2,
-        timebaseSrc='/%s/20MHzTimebase' % devA)
+        timebaseSrc='/%s/20MHzTimebase' % config.DAQ_A)
 
     if config.SIM and gb.appMode != 'Calibration':
         analogOutput.connect(analogInput, [0,1,2,3])
         if gb.session.recording.value == 'Physiology':
-            physiologyOutput = daq.AnalogOutput('/%s/ao1:%d' % (devB, physLines),
-                31.25e3, np.inf, name='physiologyOutput', dataChunk=2,
-                dataNeeded=physiologyOutputDataNeeded)
-            physiologyOutput.connect(physiologyInput, list(range(physLines)))
+            physiologyOutput = daq.AnalogOutput('/%s/ao1:%d' % (config.DAQ_B,
+                config.ELECTRODE_COUNT), 31.25e3, np.inf, dataChunk=2,
+                name='physiologyOutput', dataNeeded=physiologyOutputDataNeeded)
+            physiologyOutput.connect(physiologyInput,
+                list(range(config.ELECTRODE_COUNT)))
 
 def start():
     if gb.appMode != 'Calibration':
