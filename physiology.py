@@ -40,7 +40,10 @@ log = logging.getLogger(__name__)
 
 
 class PhysiologyWindow(QtWidgets.QMainWindow):
-    # initializing the interface
+
+    ########################################
+    # initialize the GUI
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -55,8 +58,8 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
         # init side bars
         # self.addToolBar(QtCore.Qt.LeftToolBarArea , self.initSessionBar() )
-        # self.addToolBar(QtCore.Qt.LeftToolBarArea , self.initRoveBar()    )
-        # self.addToolBar(QtCore.Qt.LeftToolBarArea , self.initParadigmBar())
+        self.addToolBar(QtCore.Qt.LeftToolBarArea , self.initControlBar()   )
+        self.addToolBar(QtCore.Qt.LeftToolBarArea , self.initSettingsBar())
         # self.addToolBar(QtCore.Qt.RightToolBarArea, self.initStatusBar()  )
         # self.addToolBar(QtCore.Qt.RightToolBarArea, self.initTrialLogBar())
 
@@ -81,150 +84,220 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             self.physiologyInputDataAcquired)
 
     def initPlot(self):
-        physiologyFS         = daqs.physiologyInput.fs
-        lineCount            = daqs.physiologyInput.lineCount
-        behavior             = gb.behaviorWindow
+        physiologyFS          = daqs.physiologyInput.fs
+        lineCount             = daqs.physiologyInput.lineCount
+        lineLabels            = list(map(str, np.arange(lineCount)+1))
+        behavior              = gb.behaviorWindow
 
-        self.plot            = plotting.ChannelPlotWidget(yLimits=(-4,15),
-                               yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
-                               yLabel='Electrodes')
+        self.timePlot         = plotting.ChannelPlotWidget(xRange=10,
+                                yLimits=(-4,15), yLabel='Electrodes',
+                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
-        self.physiologyTrace = plotting.AnalogChannel(physiologyFS, self.plot,
-                               label=list(map(str, np.arange(lineCount)+1)),
-                               hdf5Node='/trace/physiology',
-                               lineCount=lineCount,
-                               yScale=.05, yOffset=14, yGap=-1)
+        self.physiologyTrace  = plotting.AnalogChannel(physiologyFS,
+                                self.timePlot, label=lineLabels,
+                                hdf5Node='/trace/physiology',
+                                lineCount=lineCount, filter=(300,6e3),
+                                yScale=.1, yOffset=14, yGap=-1, grandMean=True)
 
         # rectangular plots
-        self.trialEpoch      = plotting.RectEpochChannel(self.plot,
-                               label='Trial', source=behavior.trialEpoch,
-                               yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)
-        self.targetEpoch     = plotting.RectEpochChannel(self.plot,
-                               label='Target', source=behavior.targetEpoch,
-                               yOffset=-2.5, yRange=.5,
-                               color=config.COLOR_TARGET)
-        self.pumpEpoch       = plotting.RectEpochChannel(self.plot,
-                               label='Pump', source=behavior.pumpEpoch,
-                               yOffset=-3, yRange=.5, color=config.COLOR_PUMP)
-        self.timeoutEpoch    = plotting.RectEpochChannel(self.plot,
-                               label='Timeout', source=behavior.timeoutEpoch,
-                               yOffset=-3.5, yRange=.5,
-                               color=config.COLOR_TIMEOUT)
+        self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
+                                label='Trial', source=behavior.trialEpoch,
+                                yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)
+        self.targetEpoch      = plotting.RectEpochChannel(self.timePlot,
+                                label='Target', source=behavior.targetEpoch,
+                                yOffset=-2.5, yRange=.5,
+                                color=config.COLOR_TARGET)
+        self.pumpEpoch        = plotting.RectEpochChannel(self.timePlot,
+                                label='Pump', source=behavior.pumpEpoch,
+                                yOffset=-3, yRange=.5, color=config.COLOR_PUMP)
+        self.timeoutEpoch     = plotting.RectEpochChannel(self.timePlot,
+                                label='Timeout', source=behavior.timeoutEpoch,
+                                yOffset=-3.5, yRange=.5,
+                                color=config.COLOR_TIMEOUT)
 
-        self.plot.timeBase   = self.physiologyTrace
-        self.plot.start()
+        self.timePlot.timeBase = self.physiologyTrace
+        self.timePlot.start()
 
-        return self.plot
+        self.fftPlot          = plotting.ChannelPlotWidget(
+                                xLimits=(0, 5e3), xGrid=1e3,
+                                xLabel='Frequency (kHz)',
+                                xTicksFormat=lambda x: '%g' % (x/1e3),
+                                yLimits=(-4,15),
+                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
+                                timePlot=False)
 
-    def sldYScaleValueChanged(self, value):
-        self.lblYScale.setText('%d dB' % value)
-        self.physiologyTrace.yScale = 10**(value/20)
+        self.spikePlot        = plotting.ChannelPlotWidget(
+                                xLimits=(-5e-3, 5e-3), xGrid=1e-3,
+                                xLabel='Time (ms)',
+                                xTicksFormat=lambda x: '%g' % (x*1e3),
+                                yLimits=(-4,15),
+                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
+                                timePlot=False)
 
-    def sldFlFilterValueChanged(self, value):
-        self.lblFlFilter.setText('%d Hz' % value)
-        self.physiologyTrace.flFilter = value
+        layout = QtWidgets.QGridLayout()
+        layout.setColumnStretch(0,2)
+        # layout.setColumnStretch(1,1)
+        # layout.setColumnStretch(2,1)
+        layout.setContentsMargins(0,0,0,0)
+        layout.setSpacing(0)
+        layout.addWidget(self.timePlot  , 0, 0)
+        # layout.addWidget(self.fftPlot   , 0, 1)
+        # layout.addWidget(self.spikePlot , 0, 2)
 
-    def sldFhFilterValueChanged(self, value):
-        self.lblFhFilter.setText('%d Hz' % value)
-        self.physiologyTrace.fhFilter = value
+        frame = QtWidgets.QFrame()
+        frame.setLayout(layout)
 
-    def initParadigmBar(self):
-        title = QtWidgets.QLabel('Paradigm settings')
+        return frame
+
+    def initControlBar(self):
+        title = QtWidgets.QLabel('Control')
+        title.setAlignment(QtCore.Qt.AlignCenter)
+
+        layout = QtWidgets.QHBoxLayout()
+        layout.setSpacing(1)
+
+        # list of buttons to be generated for the control bar
+        # '|' will define a vertical separator line
+        buttonList = [
+            ('apply'  , 'Apply'  ),
+            ('revert' , 'Revert' ),
+            ('load'   , 'Load'   ),
+            ('save'   , 'Save'   ),
+            ]
+
+        self.buttons = misc.Dict()
+
+        for (name, label) in buttonList:
+            if name == '|':
+                # add vertical separator line
+                layout.addWidget(guiHelper.QVSeparator())
+            else:
+                # generate and add button
+                btn = QtWidgets.QToolButton()
+                btn.setText(label)
+                iconFile = config.ICONS_DIR + '%s.svg' % name
+                if os.path.isfile(iconFile): btn.setIcon(QtGui.QIcon(iconFile))
+                btn.setIconSize((QtCore.QSize(40,32)))
+                btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+                btn.setAutoRaise(True)
+                # TODO: why are buttons 25% wider in mac?
+                if platform.system()=='Darwin':
+                    btn.setFixedWidth(btn.sizeHint().width()*.8)
+                if hasattr(self, '%sClicked' % name):
+                    btn.clicked.connect(getattr(self, '%sClicked' % name))
+                layout.addWidget(btn)
+                self.buttons[name] = btn
+
+        # layout.addStretch()
+
+        frame = QtWidgets.QFrame()
+        frame.setLayout(layout)
+
+        bar = QtWidgets.QToolBar('Control')
+        bar.setMovable(False)
+        bar.setStyleSheet('.QToolBar{border-bottom:%s; border-right:%s}' %
+            (config.BORDER_STYLE, config.BORDER_STYLE) )
+        bar.addWidget(frame)
+
+        return bar
+
+    def initSettingsBar(self):
+        title = QtWidgets.QLabel('Plot settings')
         title.setAlignment(QtCore.Qt.AlignCenter)
 
         layout = QtWidgets.QVBoxLayout()
 
         yScale = int(20*np.log10(self.physiologyTrace.yScale))
-        self.lblYScale = QtWidgets.QLabel('%d dB' % yScale)
+        self.lblYScale = QtWidgets.QLabel('Scale: %d dB' % yScale)
         layout.addWidget(self.lblYScale)
-        self.sldYScale = QtWidgets.QSlider()
-        self.sldYScale.setMinimum(-40)
-        self.sldYScale.setMaximum(40)
+        self.sldYScale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sldYScale.setMinimum(-50)
+        self.sldYScale.setMaximum(30)
+        self.sldYScale.setSingleStep(5)
+        self.sldYScale.setPageStep(5)
         self.sldYScale.setValue(yScale)
         self.sldYScale.valueChanged.connect(self.sldYScaleValueChanged)
         layout.addWidget(self.sldYScale)
 
-        flFilter = int(self.physiologyTrace.flFilter)
-        self.lblFlFilter = QtWidgets.QLabel('%d Hz' % flFilter)
+        filterFL = int(self.physiologyTrace.filter[0])
+        self.lblFlFilter = QtWidgets.QLabel('Lower cutoff: %d Hz' % filterFL)
         layout.addWidget(self.lblFlFilter)
-        self.sldFlFilter = QtWidgets.QSlider()
-        self.sldFlFilter.setMinimum(0)
-        self.sldFlFilter.setMaximum(4999)
-        self.sldFlFilter.setValue(yScale)
-        self.sldFlFilter.valueChanged.connect(self.sldFlFilterValueChanged)
-        layout.addWidget(self.sldFlFilter)
+        self.sldFilterFL = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sldFilterFL.setMinimum(0)
+        self.sldFilterFL.setMaximum(4e3)
+        self.sldFilterFL.setSingleStep(100)
+        self.sldFilterFL.setPageStep(100)
+        self.sldFilterFL.setValue(filterFL)
+        self.sldFilterFL.valueChanged.connect(self.sldFilterFLValueChanged)
+        layout.addWidget(self.sldFilterFL)
 
-        fhFilter = int(self.physiologyTrace.fhFilter)
-        self.lblFhFilter = QtWidgets.QLabel('%d Hz' % fhFilter)
+        filterFH = int(self.physiologyTrace.filter[1])
+        self.lblFhFilter = QtWidgets.QLabel('Higher cutoff: %d Hz' % filterFH)
         layout.addWidget(self.lblFhFilter)
-        self.sldFhFilter = QtWidgets.QSlider()
-        self.sldFhFilter.setMinimum(0)
-        self.sldFhFilter.setMaximum(4999)
-        self.sldFhFilter.setValue(yScale)
-        self.sldFhFilter.valueChanged.connect(self.sldFhFilterValueChanged)
-        layout.addWidget(self.sldFhFilter)
+        self.sldFilterFH = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.sldFilterFH.setMinimum(5e3)
+        self.sldFilterFH.setMaximum(20e3)
+        self.sldFilterFH.setSingleStep(200)
+        self.sldFilterFH.setPageStep(200)
+        self.sldFilterFH.setValue(filterFH)
+        self.sldFilterFH.valueChanged.connect(self.sldFilterFHValueChanged)
+        layout.addWidget(self.sldFilterFH)
 
+        layout2 = QtWidgets.QVBoxLayout()
+        layout2.addWidget(QtWidgets.QLabel('Left checkbox: Visible'))
+        layout2.addWidget(QtWidgets.QLabel('Right checkbox: Grand mean'))
+        # layout2.addWidget(QtWidgets.QLabel('Top row: Shanks'))
+        # layout2.addWidget(QtWidgets.QLabel('Left column: Depths'))
 
-        # for item in settings.paradigm:
-        #     if item.name == 'group':
-        #         layout2 = QtWidgets.QGridLayout()
-        #         layout2.setColumnStretch(0,1)
-        #         layout2.setColumnStretch(1,1)
-        #         grp = QtWidgets.QGroupBox()
-        #         grp.setTitle(item.label)
-        #         grp.setLayout(layout2)
-        #         layout.addWidget(grp)
-        #
-        #     elif item.name == 'rove':
-        #         # rove table is generated in `self.initRoveBar`
-        #         pass
-        #
-        #     elif item.name not in settings.paradigm.rove.value.keys():
-        #         wig2 = None
-        #
-        #         if item.type in (int, float, str) and item.values:
-        #             wig = QtWidgets.QComboBox()
-        #             wig.addItems(item.values)
-        #             wig.setCurrentText(item.value)
-        #             signal = wig.currentIndexChanged
-        #         elif item.type in (int, float, str) and not item.values:
-        #             wig = QtWidgets.QLineEdit(str(item.value))
-        #             signal = wig.textEdited
-        #             if item.name in ['targetFile', 'maskerFile']:
-        #                 # make a small button for open file dialog
-        #                 h = wig.sizeHint().height()
-        #                 wig2 = guiHelper.makeFileButton('Select file')
-        #                 wig2.clicked.connect(
-        #                     functools.partial(self.paradigmButtonClicked, item))
-        #         elif item.type is bool:
-        #             wig = QtWidgets.QCheckBox()
-        #             if item.value:
-        #                 wig.setCheckState(QtCore.Qt.Checked)
-        #             else:
-        #                 wig.setCheckState(QtCore.Qt.Unchecked)
-        #             signal = wig.stateChanged
-        #         else:
-        #             raise ValueError('Unexpected parameter type')
-        #
-        #         signal.connect(functools.partial(self.paradigmChanged, item))
-        #         item.widget  = wig
-        #
-        #         lbl = QtWidgets.QLabel(item.label + ':')
-        #         layout2.addWidget(lbl, layout2.rowCount(), 0)
-        #
-        #         if wig2 is None:
-        #             layout2.addWidget(wig, layout2.rowCount()-1, 1)
-        #         else:
-        #             item.widget2 = wig2
-        #             itemLayout = QtWidgets.QHBoxLayout()
-        #             itemLayout.addWidget(wig)
-        #             itemLayout.addWidget(wig2)
-        #             layout2.addLayout(itemLayout, layout2.rowCount()-1, 1)
+        def makeCheckBoxes(label, callback, r, c):
+            lbl = QtWidgets.QLabel(label)
+            chks = (QtWidgets.QCheckBox(), QtWidgets.QCheckBox())
+            layout4 = QtWidgets.QVBoxLayout()
+            layout4.setAlignment(QtCore.Qt.AlignCenter)
+            layout4.setSpacing(2)
+            layout4.addWidget(lbl , 0, QtCore.Qt.AlignCenter)
+            layout5 = QtWidgets.QHBoxLayout()
+            for i in range(len(chks)):
+                chks[i].setCheckState(QtCore.Qt.Checked)
+                chks[i].stateChanged.connect(functools.partial(callback, i))
+                layout5.addWidget(chks[i], 0, QtCore.Qt.AlignCenter)
+            layout4.addLayout(layout5)
+            layout3.addLayout(layout4, r, c)
+            return chks
+
+        layout3 = QtWidgets.QGridLayout()
+        self.chkAll    = makeCheckBoxes('All', self.chkAllChanged, 0, 0)
+        self.chkShanks = [None]*len(config.ELECTRODE_SHANKS)
+        self.chkDepths = [None]*len(config.ELECTRODE_DEPTHS)
+        self.chkElecs  = [None]*config.ELECTRODE_COUNT
+        for c in range(len(config.ELECTRODE_SHANKS)):
+            self.chkShanks[c] = makeCheckBoxes(config.ELECTRODE_SHANKS[c],
+                functools.partial(self.chkShanksChanged, c), 0, c+1)
+        for r in range(len(config.ELECTRODE_DEPTHS)):
+            self.chkDepths[r] = makeCheckBoxes(config.ELECTRODE_DEPTHS[r],
+                functools.partial(self.chkDepthsChanged, r), r+1, 0)
+        for r in range(config.ELECTRODE_MAP.shape[0]):
+            for c in range(config.ELECTRODE_MAP.shape[1]):
+                elec = config.ELECTRODE_MAP.iloc[r, c]
+                if not np.isnan(elec):
+                    elec = int(elec)
+                    self.chkElecs[elec-1] = makeCheckBoxes(str(elec),
+                        functools.partial(self.chkElecsChanged, elec-1),
+                        r+1, c+1,)
+        layout2.addLayout(layout3)
+
+        grp = QtWidgets.QGroupBox()
+        grp.setTitle('Electrodes')
+        grp.setLayout(layout2)
+
+        layout.addWidget(grp)
+        layout.addStretch()
 
         frame = QtWidgets.QFrame()
         frame.setLayout(layout)
 
         scroll = QtWidgets.QScrollArea()
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
         scroll.setWidgetResizable(True);
         scroll.setWidget(frame)
         scroll.setStyleSheet('.QScrollArea{border:%s}' % config.BORDER_STYLE)
@@ -243,7 +316,9 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
         return bar
 
+    ########################################
     # GUI callbacks
+
     def closeEvent(self, event):
         if event.spontaneous():
             log.debug('Ignoring spontaneous close event on physiology window')
@@ -255,91 +330,60 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # log.debug('Stopped physiology plot')
 
     @guiHelper.showExceptions
-    def paradigmChanged(self, item):
-        # if item.name == 'targetType':
-        #     tone = item.getWidgetValue() == 'Tone'
-        #     if settings.paradigm.targetFrequency.widget:
-        #         settings.paradigm.targetFrequency.widget.setEnabled(tone)
-        #     if settings.paradigm.targetFile.widget:
-        #         settings.paradigm.targetFile.widget .setEnabled(not tone)
-        #         settings.paradigm.targetFile.widget2.setEnabled(not tone)
-
-        if settings.status.experimentState.value == 'Not started':
-            item.value = item.getWidgetValue()
-
-        else:
-            hasChanged = False
-            for item in settings.paradigm:
-                if item.widget and item.value != item.getWidgetValue():
-                    hasChanged = True
-                    break
-
-            self.buttons.apply .setEnabled(hasChanged)
-            self.buttons.revert.setEnabled(hasChanged)
-
-    @guiHelper.showExceptions
-    def paradigmButtonClicked(self, item):
-        if item.name in ['targetFile', 'maskerFile']:
-            file = item.getWidgetValue()
-            if not file: file = config.STIM_DIR
-            file = guiHelper.openFile('Sound (*.wav)', file)
-            if file:
-                item.widget.setText(file.replace('\\','/'))
-                self.paradigmChanged(item)
-
-    @guiHelper.showExceptions
     def applyClicked(self, *args):
-        # trasnfer widget values to paradigm
-        for item in settings.paradigm:
-            if item.widget:
-                item.value = item.getWidgetValue()
-
-        # evaluated right away if no trials ongoing
-        if settings.status.trialState.value == 'Poke start':
-            self.evaluateParadigm()
-
-        self.buttons.apply .setEnabled(False)
-        self.buttons.revert.setEnabled(False)
-
-    @guiHelper.showExceptions
-    def revertClicked(self, *args):
-        # transfer paradigm values to widgets
-        for item in settings.paradigm:
-            if item.widget:
-                item.setWidgetValue(item.value)
-
-        self.buttons.apply .setEnabled(False)
-        self.buttons.revert.setEnabled(False)
+        # get values from widgets
+        self.physiologyTrace.refreshBlock   = True
+        self.physiologyTrace.yScale         = 10**(self.sldYScale.value()/20)
+        self.physiologyTrace.filter         = (self.sldFilterFL.value(),
+           self.sldFilterFH.value())
+        self.physiologyTrace.linesVisible   = tuple(
+            chk[0].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
+        self.physiologyTrace.linesGrandMean = tuple(
+            chk[1].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
+        self.physiologyTrace.refreshBlock = False
+        self.physiologyTrace.refresh()
 
     @guiHelper.showExceptions
-    def loadClicked(self, *args):
-        file = guiHelper.openFile(config.SETTINGS_FILTER,
-            settings.session.paradigmFile.value)
-
-        if not file: return
-
-        settings.paradigm.loadFile(file)
-        settings.session.paradigmFile.value = file
-
-        for item in settings.paradigm:
-            if item.widget:
-                item.setWidgetValue(item.value)
-
-        # evaluated right away if no trials ongoing
-        if settings.status.trialState.value == 'Poke start':
-            self.evaluateParadigm()
-
-        self.buttons.apply .setEnabled(False)
-        self.buttons.revert.setEnabled(False)
+    def sldYScaleValueChanged(self, value):
+        self.lblYScale  .setText('Scale: %d dB'         % value)
 
     @guiHelper.showExceptions
-    def saveClicked(self, *args):
-        file = guiHelper.saveFile(config.SETTINGS_FILTER,
-            settings.session.paradigmFile.value)
+    def sldFilterFLValueChanged(self, value):
+        self.lblFlFilter.setText('Lower cutoff: %d Hz'  % value)
 
-        if file:
-            settings.paradigm.saveFile(file)
-            settings.session.paradigmFile.value = file
+    @guiHelper.showExceptions
+    def sldFilterFHValueChanged(self, value):
+        self.lblFhFilter.setText('Higher cutoff: %d Hz' % value)
+
+    @guiHelper.showExceptions
+    def chkAllChanged(self, index, *args):
+        state = self.chkAll[index].checkState()
+        for chk in self.chkShanks:
+            guiHelper.setCheckState(chk[index], state)
+        for chk in self.chkDepths:
+            guiHelper.setCheckState(chk[index], state)
+        for chk in self.chkElecs:
+            guiHelper.setCheckState(chk[index], state)
+
+    @guiHelper.showExceptions
+    def chkShanksChanged(self, shank, index, *args):
+        state = self.chkShanks[shank][index].checkState()
+        for elec in config.ELECTRODE_MAP.iloc[:,shank]:
+            if np.isnan(elec): continue
+            guiHelper.setCheckState(self.chkElecs[elec-1][index], state)
+        self.refreshCheckBoxes()
+
+    @guiHelper.showExceptions
+    def chkDepthsChanged(self, depth, index, *args):
+        state = self.chkDepths[depth][index].checkState()
+        for elec in config.ELECTRODE_MAP.iloc[depth,:]:
+            if np.isnan(elec): continue
+            guiHelper.setCheckState(self.chkElecs[elec-1][index], state)
+        self.refreshCheckBoxes()
+
+    @guiHelper.showExceptions
+    def chkElecsChanged(self, elec, index, *args):
+        self.refreshCheckBoxes()
 
     @guiHelper.showExceptions
     def updateGUI(self):
@@ -348,7 +392,9 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # settings.status.fps.value = '%.1f' % self.plot.calculatedFPS
         pass
 
-    # IO callbacks
+    ########################################
+    # DAQ callbacks
+
     def digitalInputEdgeDetected(self, task, name, edge, time):
         # log.info('Detected %s edge on %s at %.3f', edge, name, time)
         # channels = {'poke':self.pokeEpoch, 'spout':self.spoutEpoch,
@@ -362,6 +408,29 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
     def physiologyInputDataAcquired(self, task, data):
         self.physiologyTrace.append(data)
+
+
+    ########################################
+    # house keeping
+
+    def refreshCheckBoxes(self):
+        def getState(elecs):
+            for elec in elecs:
+                if np.isnan(elec): continue
+                chk = self.chkElecs[elec-1][index]
+                if chk.checkState() == QtCore.Qt.Unchecked:
+                    return QtCore.Qt.Unchecked
+            return QtCore.Qt.Checked
+
+        for index in range(2):
+            guiHelper.setCheckState(self.chkAll[index],
+                getState(config.ELECTRODE_MAP.values.flatten()))
+            for shank in range(len(self.chkShanks)):
+                guiHelper.setCheckState(self.chkShanks[shank][index],
+                    getState(config.ELECTRODE_MAP.iloc[:,shank]))
+            for depth in range(len(self.chkDepths)):
+                guiHelper.setCheckState(self.chkDepths[depth][index],
+                    getState(config.ELECTRODE_MAP.iloc[depth,:]))
 
 
 # playground
