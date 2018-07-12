@@ -327,7 +327,7 @@ class Axis(pg.AxisItem):
 
 
 class ChannelPlotWidget(pg.PlotWidget):
-    '''A Qt widget for managing and plotting multiple channels in real-time.'''
+    '''A Qt widget for managing and plotting multiple channels online.'''
 
     # target frame rate per second
     @property
@@ -367,8 +367,10 @@ class ChannelPlotWidget(pg.PlotWidget):
                 'of `AnalogChannel`')
         self._timeBase = value
 
-    def __init__(self, yLimits=(-1,1), yGrid=1, xRange=10, xGrid=1, fps=60,
-            yLabel='', *args, **kwargs):
+    def __init__(self,
+            xLimits=(0,10), xGrid=1, xLabel=None, xRange=10, xTicksFormat=None,
+            yLimits=(-1,1), yGrid=1, yLabel=None, timePlot=True, fps=60,
+            *args, **kwargs):
         '''
         Args:
             yLimits (tuple of float): Minimum and maximum values shown on the
@@ -385,17 +387,35 @@ class ChannelPlotWidget(pg.PlotWidget):
 
         super().__init__(*args, **kwargs, axisItems={'left':Axis('left')})
 
+        # in a time plot, xRange ovverides xLimits
+        if timePlot:
+            # pass
+            xLimits = (0, xRange)
+            if xLabel is None:
+                xLabel = 'Time (min:sec)'
+            if xTicksFormat is None:
+                xTicksFormat = lambda x: '%02d:%02d' % (x//60,x%60)
+        # in a normal plot, xLimits override xRange
+        else:
+            # pass
+            xRange = xLimits[1]-xLimits[0]
+            if xTicksFormat is None:
+                xTicksFormat = lambda x: str(x)
+
         # should not change after __init__
         self._yLimits       = yLimits
         self._yGrid         = yGrid
+        self._xLimits       = xLimits
+        self._xGrid         = xGrid
         self._xRange        = xRange
-        self._yGrid         = yGrid
+        self._xTicksFormat  = xTicksFormat
+        self._timePlot      = timePlot
         self._fps           = fps
         self._calculatedFPS = 0
 
         self._channels      = []
-        self._timeBase      = None
         self._updateTimes   = []    # hold last update times for FPS calculation
+        self._timeBase      = None
         self._tsMinLast     = None
 
         self._timer         = QtCore.QTimer()
@@ -407,8 +427,9 @@ class ChannelPlotWidget(pg.PlotWidget):
         self.setMenuEnabled(False)
         self.setClipToView(False)
         self.disableAutoRange()
-        self.setRange(xRange=(0, xRange), yRange=yLimits, padding=0)
-        self.setLimits(xMin=0, xMax=xRange, yMin=yLimits[0], yMax=yLimits[1])
+        self.setRange(xRange=xLimits, yRange=yLimits, padding=0)
+        self.setLimits(xMin=xLimits[0], xMax=xLimits[1],
+            yMin=yLimits[0], yMax=yLimits[1])
         self.hideButtons()
 
         # draw all axis as black (draw box)
@@ -420,35 +441,39 @@ class ChannelPlotWidget(pg.PlotWidget):
         self.getAxis('right' ).setTicks([])
         self.getAxis('right' ).show()
         self.getAxis('top'   ).show()
-        self.getAxis('top'   ).setLabel('<br />Time (min:sec)')
-        if yLabel:
+        if xLabel is not None:
+            self.getAxis('top' ).setLabel('<br />' + xLabel)
+        if yLabel is not None:
             self.getAxis('left').setLabel('<br />' + yLabel)
-        xticks = [(t, '%02d:%02d' % (t//60,t%60)) for t in range(xRange+1)]
-        self.getAxis('top').setTicks([xticks])
 
-        # draw vertical grid
+        gridMajorPen = pg.mkPen((150,150,150), style=QtCore.Qt.DashLine,
+            cosmetic=True)
+        gridMinorPen = pg.mkPen((150,150,150), style=QtCore.Qt.DotLine,
+            cosmetic=True)
+
+        # init x grid (vertical)
         self._xGridMajor = [None] * int(np.ceil(xRange/xGrid)-1)
         self._xGridMinor = [None] * int(np.ceil(xRange/xGrid))
         for i in range(len(self._xGridMajor)):
-            line = pg.InfiniteLine(i+1, 90, pen=pg.mkPen((150,150,150),
-                style=QtCore.Qt.DashLine, cosmetic=True))
-            self._xGridMajor[i] = line
-            self.addItem(line)
+            self._xGridMajor[i] = pg.InfiniteLine(None, 90, pen=gridMajorPen)
+            self.addItem(self._xGridMajor[i])
         for i in range(len(self._xGridMinor)):
-            line = pg.InfiniteLine(i+.5, 90, pen=pg.mkPen((150,150,150),
-                style=QtCore.Qt.DotLine, cosmetic=True))
-            self._xGridMinor[i] = line
-            self.addItem(line)
+            self._xGridMinor[i] = pg.InfiniteLine(None, 90, pen=gridMinorPen)
+            self.addItem(self._xGridMinor[i])
 
-        # draw horizontal grid
+        # draw x grid and ticks
+        self.getAxis('top').setStyle(tickLength=0)
+        self.updateXAxis()
+
+        # draw y grid (horizontal)
         if yGrid is None: yGridAt = []
-        elif isinstance(yGrid, list): yGridAt = yGrid
+        elif misc.listLike(yGrid): yGridAt = yGrid
         else: yGridAt = range(yLimits[0]+yGrid, yLimits[1], yGrid)
         for y in yGridAt:
-            line = pg.InfiniteLine(y, 0, pen=pg.mkPen((150,150,150),
-                style=QtCore.Qt.DashLine, cosmetic=True))
+            line = pg.InfiniteLine(y, 0, pen=gridMajorPen)
             self.addItem(line)
 
+        # draw y ticks
         yMajorTicks = [(y, '') for y in yGridAt]
         yMinorTicks = []
         self.getAxis('left').setTicks([yMajorTicks, yMinorTicks])
@@ -499,38 +524,53 @@ class ChannelPlotWidget(pg.PlotWidget):
             self._calculatedFPS = fps
             self._updateLast = dt.datetime.now()
 
-            ts         = None
-            tsMin      = None
-            nextWindow = False
+            if self._timePlot:
+                ts         = None
+                tsMin      = None
+                nextWindow = False
 
-            if self._timeBase is not None:
-                ts = self.timeBase.ts
-                tsMin = int(ts//self.xRange*self.xRange)
+                if self._timeBase is not None:
+                    ts = self.timeBase.ts
+                    tsMin = int(ts//self.xRange*self.xRange)
 
-                # determine when plot advances to next time window
-                if tsMin != self._tsMinLast:
-                    self.setLimits(xMin=tsMin, xMax=tsMin+self.xRange)
+                    # determine when plot advances to next time window
+                    if tsMin != self._tsMinLast:
+                        self.setLimits(xMin=tsMin, xMax=tsMin+self.xRange)
 
-                    # update vertical grid
-                    ticks = [(t, '%02d:%02d' % (t//60,t%60)) for t in
-                        range(tsMin, tsMin+self.xRange+1)]
-                    self.getAxis('top').setTicks([ticks])
-                    for i in range(len(self._xGridMajor)):
-                        self._xGridMajor[i].setValue(tsMin+i+1)
-                    for i in range(len(self._xGridMinor)):
-                        self._xGridMinor[i].setValue(tsMin+i+.5)
+                        self.updateXAxis(tsMin)
 
-                    log.debug('Advancing to next plot window at %d', tsMin)
-                    self._tsMinLast = tsMin
-                    nextWindow = True
+                        log.debug('Advancing to next plot window at %d', tsMin)
+                        self._tsMinLast = tsMin
+                        nextWindow = True
 
-            # update all channels
-            for channel in self._channels:
-                channel.updatePlot(ts, tsMin, nextWindow)
+                # update all channels
+                for channel in self._channels:
+                    channel.updatePlot(ts, tsMin, nextWindow)
+            else:
+                # update all channels
+                for channel in self._channels:
+                    channel.updatePlot()
 
         except:
             log.exception('Failed to update plot, stopping plot timer')
             self._timer.stop()
+
+    def updateXAxis(self, xMin=None):
+        '''Update X ticks and grid'''
+        if xMin is None:
+            xMin = self._xLimits[0]
+
+        # update vertical grid
+        for i in range(len(self._xGridMajor)):
+            self._xGridMajor[i].setValue(xMin+(i+1)*self._xGrid)
+        for i in range(len(self._xGridMinor)):
+            self._xGridMinor[i].setValue(xMin+(i+.5)*self._xGrid)
+
+        xMajorTicks = [(t, self._xTicksFormat(t))
+            for t in np.arange(xMin,xMin+self.xRange+self._xGrid/2,self._xGrid)]
+        xMinorTicks = [(t, self._xTicksFormat(t))
+            for t in np.arange(xMin+self._xGrid/2,xMin+self.xRange,self._xGrid)]
+        self.getAxis('top').setTicks([xMajorTicks, xMinorTicks])
 
 
 class BaseChannel():
@@ -582,10 +622,18 @@ class BaseChannel():
 class AnalogChannel(BaseChannel):
     '''All-in-one class for storage and plotting of multiline analog signals.
 
-    Utilizes the `data` module for storage in HDF5 file format.
+    Utilizes the `hdf5` module for storage in HDF5 file format.
 
     Needs to be paired with a ChannelPlotWidget for plotting.
     '''
+
+    @property
+    def refreshBlock(self):
+        return self._refreshBlock
+
+    @refreshBlock.setter
+    def refreshBlock(self, value):
+        self._refreshBlock = value
 
     @property
     def lineCount(self):
@@ -613,32 +661,54 @@ class AnalogChannel(BaseChannel):
 
     @yScale.setter
     def yScale(self, value):
-        self._yScale = value
-        if self._init: self.refresh()
-
-    @property
-    def flFilter(self):
-        return self._flFilter
-
-    @flFilter.setter
-    def flFilter(self, value):
-        self._flFilter = value
+        # verify
+        if hasattr(self, '_yScale') and self._yScale == value:
+            return
 
         with self._refreshLock:
-            self._refreshFilter()
-            if self._init: self._refresh()
+            # save
+            self._yScale = value
+
+            # apply
+            if not self._refreshBlock:
+                self._refresh()
 
     @property
-    def fhFilter(self):
-        return self._fhFilter
+    def filter(self):
+        return self._filter
 
-    @fhFilter.setter
-    def fhFilter(self, value):
-        self._fhFilter = value
+    @filter.setter
+    def filter(self, value):
+        # verify
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise ValueError('`filter` should be a tuple of 2')
+        if hasattr(self, '_filter') and self._filter == value:
+            return
 
         with self._refreshLock:
-            self._refreshFilter()
-            if self._init: self._refresh()
+            # save
+            self._filter = value
+
+            # prep filter
+            fs = self.fs
+            fl, fh = value
+            if (fl and 0<fl and fh and fh<fs):
+                filterBA = sp.signal.butter(6, [fl/fs,fh/fs], 'bandpass')
+            elif fl and 0<fl:
+                filterBA = sp.signal.butter(6, fl/fs, 'highpass')
+            elif fh and fh<fs:
+                filterBA = sp.signal.butter(6, fh/fs, 'lowpass')
+            else:
+                filterBA = None
+
+            self._filterBA = filterBA
+            if self._filterBA:
+                zi = sp.signal.lfilter_zi(*self._filterBA)
+                self._filterZI = np.zeros((self.lineCount, len(zi)))
+
+            # apply
+            if not self._refreshBlock:
+                self._refresh()
 
     @property
     def fsPlot(self):
@@ -646,6 +716,10 @@ class AnalogChannel(BaseChannel):
 
     @fsPlot.setter
     def fsPlot(self, value):
+        # verify
+        if hasattr(self, '_fsPlot') and self._fsPlot == value:
+            return
+
         with self._refreshLock:
             if value and value != self.fs:
                 # downsampling factor, i.e. number of consecutive samples to
@@ -659,12 +733,66 @@ class AnalogChannel(BaseChannel):
 
             self._fsPlot = value
 
-            if self._init: self._refresh()
+            if not self._refreshBlock:
+                self._refresh()
+
+    @property
+    def linesVisible(self):
+        return self._linesVisible
+
+    @linesVisible.setter
+    def linesVisible(self, value):
+        # verify
+        if not isinstance(value, tuple):
+            raise TypeError('Value should be a tuple')
+        if len(value) != self.lineCount:
+            raise ValueError('Value should have exactly `lineCount` elements')
+        for v in value:
+            if not isinstance(v, bool):
+                raise ValueError('All elements must be `bool` instances')
+
+        if hasattr(self, '_linesVisible') and self._linesVisible == value:
+            return
+
+        with self._refreshLock:
+            # save
+            self._linesVisible = value
+
+            # apply
+            if hasattr(self, '_curves'):
+                for i in range(self.lineCount):
+                    for curve in self._curves[i]:
+                        curve.setVisible(value[i])
+
+    @property
+    def linesGrandMean(self):
+        return self._linesGrandMean
+
+    @linesGrandMean.setter
+    def linesGrandMean(self, value):
+        # verify
+        if not isinstance(value, tuple):
+            raise TypeError('Value should be a tuple')
+        if len(value) != self.lineCount:
+            raise ValueError('Value should have exactly `lineCount` elements')
+        for v in value:
+            if not isinstance(v, bool):
+                raise ValueError('All elements must be `bool` instances')
+        if hasattr(self, '_linesGrandMean') and self._linesGrandMean == value:
+            return
+
+        with self._refreshLock:
+            # save
+            self._linesGrandMean = value
+
+            # apply
+            if not self._refreshBlock:
+                self._refresh()
 
     def __init__(self, fs, plotWidget=None, label=None, labelOffset=0,
             source=None, hdf5Node=None, lineCount=1, yScale=1, yOffset=0,
-            yGap=1, color=list('rgbcmyk'), chunkSize=1, flFilter=0, fhFilter=0,
-            fsPlot=5e3):
+            yGap=1, color=list('rgbcmyk'), chunkSize=.5, filter=(None,None),
+            fsPlot=5e3, grandMean=False):
         '''
         Args:
             fs (float): Actual sampling frequency of the channel in Hz.
@@ -678,40 +806,40 @@ class AnalogChannel(BaseChannel):
             yScale (float): In-place scaling factor for indivudal lines.
                 Defaults to 1.
             yOffset (float): Defaults to 0.
-            yGap (float): Defaults to 10.
+            yGap (float): The gap between multiple lines. Defaults to 10.
             color (list of str or tuple): Defaults to list('rgbcmyk').
-            chunkSize (float): In seconds. Defaults to 1.
-            flFilter (float): Lower cutoff frequency.
-            fhFilter (float): Higher cutoff frequency.
-            fsPlot (float): In Hz. Defaults to 5e3.
+            chunkSize (float): In seconds. Defaults to 0.5.
+            filter (tuple of 2 floats): Lower and higher cutoff frequencies.
+            fsPlot (float): Plotting sampling frequency in Hz. Defaults to 5e3.
         '''
 
         labelOffset = np.arange(lineCount)*yGap+yOffset+labelOffset
         super().__init__(plotWidget, label, labelOffset, source)
 
-        self._init        = False
-        self._refreshLock = threading.Lock()
+        self._refreshBlock   = True
+        self._refreshLock    = threading.Lock()
 
-        self._fs          = fs
-        self._hdf5Node    = hdf5Node
-        self._lineCount   = lineCount
-        self._yScale      = yScale
-        self._yOffset     = yOffset
-        self._yGap        = yGap
-        self._color       = color if isinstance(color, list) else [color]
-        self._chunkSize   = chunkSize
-        self.flFilter     = flFilter
-        self.fhFilter     = fhFilter
-        self.fsPlot       = fsPlot
+        self._fs             = fs
+        self._hdf5Node       = hdf5Node
+        self._lineCount      = lineCount
+        self.yScale          = yScale
+        self._yOffset        = yOffset
+        self._yGap           = yGap
+        self._color          = color if isinstance(color, list) else [color]
+        self._chunkSize      = chunkSize
+        self.filter          = filter
+        self.fsPlot          = fsPlot
 
-        buffer1Size       = int(self.plotWidget.xRange*self.fs    *1.2)
-        buffer2Size       = int(self.plotWidget.xRange*self.fsPlot*1.2)
-        # self._bufferX     = misc.CircularBuffer((lineCount, buffer1Size))
-        self._buffer1     = misc.CircularBuffer((lineCount, buffer1Size))
-        self._buffer2     = misc.CircularBuffer((lineCount, buffer2Size))
+        self.linesVisible    = (True,) * lineCount
+        self.linesGrandMean  = (grandMean,) * lineCount
 
-        self._init        = True
+        buffer1Size          = int(self.plotWidget.xRange*self.fs    *1.2)
+        buffer2Size          = int(self.plotWidget.xRange*self.fsPlot*1.2)
+        # self._bufferX        = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer1        = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer2        = misc.CircularBuffer((lineCount, buffer2Size))
 
+        self._refreshBlock   = False
         self._refresh()
 
         self._processThread = threading.Thread(target=self._processLoop)
@@ -735,22 +863,31 @@ class AnalogChannel(BaseChannel):
                 with self._refreshLock:
                     # read input buffer
                     with self._buffer1:
-                        ns = self._buffer1.nsWritten
+                        ns = self._buffer1.nsWritten-self._buffer1.nsRead
                         if self._dsFactor:
                             ns = ns//self._dsFactor*self._dsFactor
-                        if ns <= self._buffer1.nsRead: continue
+                        if ns <= 0: continue
+                        ns += self._buffer1.nsRead
                         data = self._buffer1.read(to=ns).copy()
+
+                    dataCopy = data.copy()
+                    for line in range(data.shape[0]):
+                        linesMask = np.array(self._linesGrandMean)
+                        if not linesMask[line]: continue
+                        linesMask[line] = False
+                        if not linesMask.any(): continue
+                        data[line,:] -= dataCopy[linesMask,:].mean(axis=0)
+
+                    # IIR filter
+                    if self._filterBA:
+                        data, self._filterZI = sp.signal.lfilter(
+                            *self._filterBA, data, zi=self._filterZI)
 
                     # downsample
                     if self._dsFactor:
                         data = data.reshape(
                             (self.lineCount, -1, self._dsFactor))
                         data = data.mean(axis=2)
-
-                    # IIR filter
-                    if self._baFilter:
-                        data, self._ziFilter = sp.signal.lfilter(
-                            *self._baFilter, data, zi=self._ziFilter)
 
                     # write to output buffer
                     with self._buffer2:
@@ -759,26 +896,8 @@ class AnalogChannel(BaseChannel):
         except:
             log.exception('Failed to process data, stopping process thread')
 
-    def _refreshFilter(self):
-        # b = sp.signal.firwin(201, fband, fs=self._fsPlot, pass_zero=False)
-        # a = [1]
-        if self.flFilter and self.fhFilter:
-            self._baFilter = sp.signal.butter(6, np.array([self.flFilter,
-                self.fhFilter])/self.fsPlot, 'bandpass')
-        elif self.flFilter:
-            self._baFilter = sp.signal.butter(6, self.flFilter/self.fsPlot,
-                'highpass')
-        elif self.flFilter:
-            self._baFilter = sp.signal.butter(6, self.fhFilter/self.fsPlot,
-                'lowpass')
-        else:
-            self._baFilter = None
-
-        if self._baFilter:
-            zi = sp.signal.lfilter_zi(*self._baFilter)
-            self._ziFilter = np.zeros((self.lineCount, len(zi)))
-
     def _refresh(self):
+        # reset buffers to the beginning of the current plot window
         nsRange = int(self.plotWidget.xRange*self.fs)
         self._buffer1.nsRead  = self._buffer1.nsRead  // nsRange * nsRange
         nsRange = int(self.plotWidget.xRange*self.fsPlot)
@@ -796,6 +915,7 @@ class AnalogChannel(BaseChannel):
             for j in range(chunkCount):
                 self._curves[i][j] = self.plotWidget.plot([], [],
                     pen=self._color[i % len(self._color)])
+                self._curves[i][j].setVisible(self.linesVisible[i])
 
     def append(self, data):
         '''
@@ -855,6 +975,74 @@ class AnalogChannel(BaseChannel):
     def refresh(self):
         with self._refreshLock:
             self._refresh()
+
+
+class FFTChannel(BaseChannel):
+
+    def __init__(self, fs, plotWidget=None, label=None, labelOffset=0,
+        source=None, hdf5Node=None, lineCount=1, yScale=1, yOffset=0,
+        yGap=1, color=list('rgbcmyk'), chunkSize=.5, filter=(None,None),
+        fsPlot=5e3):
+        '''
+        Args:
+        fs (float): Actual sampling frequency of the channel in Hz.
+        plotWidget (ChannelPlotWidget): Defaults to None.
+        label (str or list of str): ...
+        labelOffset (float): ...
+        source (BaseChannel): ...
+        hdf5Node (str): Path of the node to store data in HDF5 file.
+        Defaults to None.
+        lineCount (int): Number of lines. Defaults to 1.
+        yScale (float): In-place scaling factor for indivudal lines.
+        Defaults to 1.
+        yOffset (float): Defaults to 0.
+        yGap (float): The gap between multiple lines. Defaults to 10.
+        color (list of str or tuple): Defaults to list('rgbcmyk').
+        chunkSize (float): In seconds. Defaults to 0.5.
+        filter (tuple of 2 floats): Lower and higher cutoff frequencies.
+        fsPlot (float): Plotting sampling frequency in Hz. Defaults to 5e3.
+        '''
+
+        labelOffset = np.arange(lineCount)*yGap+yOffset+labelOffset
+        super().__init__(plotWidget, label, labelOffset, source)
+
+        self._refreshBlock = True
+        self._refreshLock  = threading.Lock()
+
+        self._fs           = fs
+        self._hdf5Node     = hdf5Node
+        self._lineCount    = lineCount
+        self.yScale        = yScale
+        self._yOffset      = yOffset
+        self._yGap         = yGap
+        self._color        = color if isinstance(color, list) else [color]
+        self._chunkSize    = chunkSize
+        self.filter        = filter
+        self.fsPlot        = fsPlot
+
+        buffer1Size        = int(self.plotWidget.xRange*self.fs    *1.2)
+        buffer2Size        = int(self.plotWidget.xRange*self.fsPlot*1.2)
+        # self._bufferX      = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer1      = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer2      = misc.CircularBuffer((lineCount, buffer2Size))
+
+        self._refreshBlock = False
+
+        self._refresh()
+
+        self._processThread = threading.Thread(target=self._processLoop)
+        self._processThread.daemon = True
+        self._processThread.start()
+
+        if hdf5Node is not None:
+            if hdf5.contains(hdf5Node):
+                raise NameError('HDF5 node %s already exists' % hdf5Node)
+            hdf5.createEArray(hdf5Node, tb.Float64Atom(), (0,lineCount),
+                '', filters, expectedrows=fs*60*30)    # 30 minutes
+            hdf5.setNodeAttr(hdf5Node, 'fs', fs)
+
+        self.initPlot()
+
 
 
 # class AnalogGenerator():
