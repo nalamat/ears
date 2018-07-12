@@ -174,6 +174,15 @@ def centerWindow(window, screenNumber=-1):
         window.rect().center())
 
 
+def setCheckState(checkBox, checkState, blockSignals=True):
+    '''Set check state of a QCheckBox while optionally blocking its signals.'''
+    if not isinstance(checkBox, QtWidgets.QCheckBox):
+        raise TypeError('`checkBox` should be an instance of `QCheckBox`')
+    if blockSignals: checkBox.blockSignals(True)
+    checkBox.setCheckState(checkState)
+    if blockSignals: checkBox.blockSignals(False)
+
+
 def showBusyCursor():
     QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
 
