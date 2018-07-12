@@ -175,8 +175,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         micNode           = '/trace/mic'     if physiology else None
 
         # plot widget
-        self.plot         = plotting.ChannelPlotWidget(yLimits=(-1,7.5),
-                            yGrid=[-.5,0,1,2,2.5,4.5,5,6,7], xRange=10)
+        self.plot         = plotting.ChannelPlotWidget(xRange=10,
+                            yLimits=(-1,7.5), yGrid=[-.5,0,1,2,2.5,4.5,5,6,7])
 
         # analog traces
         self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
@@ -472,7 +472,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         scroll.setStyleSheet('.QScrollArea{border:%s}' % config.BORDER_STYLE)
         scroll.setWidgetResizable(True);
         scroll.setWidget(frame)
-        scroll.setFixedWidth(scroll.sizeHint().width()*1.1)
+        scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+        # scroll.setFixedWidth(scroll.sizeHint().width()*1.1)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(title)
