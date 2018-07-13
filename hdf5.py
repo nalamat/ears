@@ -179,12 +179,28 @@ def _checkFile():
 
 
 if __name__ == '__main__':
-    x = None
+    import numpy as np
+    import datetime as dt
 
-    def test():
-        global x
-        x = 12
+    # test bench different compression libraries for speed and size
+    fs    = int(31.25e3)
+    dur   = 5*60
+    chunk = 1*60
 
-    print(x)
-    test()
-    print(x)
+    for complib in ('zlib', 'blosc', 'lzo', 'bzip2'):
+        for complevel in (1,5,9):
+            file = 'test_hdf5/%s-%d.h5' % (complib, complevel)
+            filters = tb.Filters(complevel=complevel, complib=complib)
+            node = '/trace'
+            open(file, mode='w')
+            createEArray(node, tb.Float32Atom(), (0,16),
+                '', filters, expectedrows=dur*fs)
+            setNodeAttr(node, 'fs', fs)
+
+            tic = dt.datetime.now()
+            for i in range(0, dur, chunk):
+                appendArray(node, np.random.rand(chunk*fs, 16))
+            flush()
+            toc = (dt.datetime.now()-tic).total_seconds()
+            print('%s-%d: %g' % (complib, complevel, toc))
+            close()
