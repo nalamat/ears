@@ -250,7 +250,7 @@ class CircularBuffer():
                 (self._nsRead,self._nsWritten,self._data.shape[self._axis]))
         self._updatedEvent.set()
 
-    def read(self, frm=None, to=None):
+    def read(self, frm=None, to=None, advance=True):
         '''Read samples from the buffer.
 
         Read data might have to be copied for thread safety and in order to
@@ -270,8 +270,8 @@ class CircularBuffer():
         if to  is None: to  = nsWritten
         if to < 0: to = nsWritten - to
 
-        if to <= frm:
-            raise IndexError('Cannot read less than 1 sample')
+        if to < frm:
+            raise IndexError('Cannot read less negative number of samples')
         if frm < self._nsWritten - self._data.shape[self._axis]:
             raise IndexError('Cannot read past (circular) buffer size')
         if nsWritten < to:
@@ -285,7 +285,8 @@ class CircularBuffer():
         window = self._getWindow(indices)
 
         # advance number of samples written
-        self._nsRead = to
+        if advance:
+            self._nsRead = to
 
         # data should be copied after returning for thread safety
         return self._data[window]
