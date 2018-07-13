@@ -769,10 +769,28 @@ class AnalogChannel(BaseChannel):
             if not self._refreshBlock:
                 self._refresh()
 
+    @property
+    def threshold(self):
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value):
+        # verify
+        if hasattr(self, '_threshold') and self._threshold == value:
+            return
+
+        with self._refreshLock:
+            # save
+            self._threshold = value
+
+            # apply
+            if not self._refreshBlock:
+                self._refresh()
+
     def __init__(self, fs, plotWidget=None, label=None, labelOffset=0,
             source=None, hdf5Node=None, lineCount=1, yScale=1, yOffset=0,
             yGap=1, color=list('rgbcmyk'), chunkSize=.5, filter=(None,None),
-            fsPlot=5e3, grandMean=False):
+            fsPlot=5e3, grandMean=False, threshold=0):
         '''
         Args:
             fs (float): Actual sampling frequency of the channel in Hz.
@@ -810,6 +828,7 @@ class AnalogChannel(BaseChannel):
         self.filter          = filter
         self.linesVisible    = (True,) * lineCount
         self.linesGrandMean  = (grandMean,) * lineCount
+        self.threshold       = threshold
 
         # calculate an integer downsampling factor base on `fsPlot`
         if fsPlot and fsPlot != self.fs:
@@ -886,6 +905,15 @@ class AnalogChannel(BaseChannel):
             log.exception('Failed to process data, stopping process thread')
 
     def _refresh(self):
+        if hasattr(self, '_thresholdGuides'):
+            for i in range(self.lineCount):
+                for j in range(2):
+                    y = (self._yOffset + i*self._yGap +
+                        self.yScale*self.threshold*(j*2-1))
+                    line = self._thresholdGuides[i][j]
+                    line.setValue(y)
+                    line.setVisible(bool(self._threshold))
+
         # reset buffers to the beginning of the current plot window
         nsRange = int(self.plotWidget.xRange*self.fs)
         self._buffer1.nsRead    = self._buffer1.nsRead    // nsRange * nsRange
@@ -894,6 +922,18 @@ class AnalogChannel(BaseChannel):
         # self._chunkLast = 0
 
     def initPlot(self):
+        # threshold guide lines
+        pen = pg.mkPen((255,0,0,150), style=QtCore.Qt.DashLine, cosmetic=True)
+        self._thresholdGuides = [[None]*2 for i in range(self.lineCount)]
+        for i in range(self.lineCount):
+            for j in range(2):
+                y = (self._yOffset + i*self._yGap +
+                    self.yScale*self.threshold*(j*2-1))
+                line = pg.InfiniteLine(y, 0, pen=pen)
+                line.setVisible(bool(self.threshold))
+                self.plotWidget.addItem(line)
+                self._thresholdGuides[i][j] = line
+
         # prepare plotting chunks
         self._chunkCount = int(np.ceil(self.plotWidget.xRange/self._chunkSize))
         self._curves = [[None]*self._chunkCount for i in range(self.lineCount)]
@@ -967,6 +1007,19 @@ class AnalogChannel(BaseChannel):
                     nsFrom, nsFromMin, chunkFrom, nsTo, nsToMin, chunkTo,
                     chunk, line)
                 raise
+
+            # update threshold guide lines
+            # if self.threshold:
+            #     buffer2Size = self._buffer2.shape[self._buffer2.axis]
+            #     frm = max(0, self._buffer2.nsWritten-buffer2Size)
+            #     data = self._buffer2.read(frm=frm, advance=False)
+            #     if data.shape[-1]:
+            #         for i in range(self.lineCount):
+            #             sigma = np.median(np.abs(data[i,:]))
+            #             for j in range(2):
+            #                 y = (self._yOffset + i*self._yGap +
+            #                     self.yScale*self.threshold*sigma*(j*2-1))
+            #                 self._thresholdGuides[i][j].setValue(y)
 
     def refresh(self):
         with self._refreshLock:
