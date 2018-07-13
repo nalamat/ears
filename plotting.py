@@ -32,8 +32,10 @@ import hdf5
 
 
 log = logging.getLogger(__name__)
-# default compression 'zlib' is too slow for storage of physiology
-filters = tb.Filters(complevel=9, complib='blosc')
+# complib: zlib, lzo, bzip2, blosc, blosc:blosclz, blosc:lz4,
+# blosc:lz4hc, blosc:snappy, blosc:zlib, blosc:zstd
+# complevel: 0 (no compression) to 9 (maximum compression)
+hdf5Filters = tb.Filters(complib='zlib', complevel=1)
 
 
 # imports for Axis
@@ -849,8 +851,8 @@ class AnalogChannel(BaseChannel):
         if hdf5Node is not None:
             if hdf5.contains(hdf5Node):
                 raise NameError('HDF5 node %s already exists' % hdf5Node)
-            hdf5.createEArray(hdf5Node, tb.Float64Atom(), (0,lineCount),
-                '', filters, expectedrows=fs*60*30)    # 30 minutes
+            hdf5.createEArray(hdf5Node, tb.Float32Atom(), (0,lineCount),
+                '', hdf5Filters, expectedrows=fs*60*30)    # 30 minutes
             hdf5.setNodeAttr(hdf5Node, 'fs', fs)
 
         self.initPlot()
@@ -961,16 +963,23 @@ class AnalogChannel(BaseChannel):
             # if nextWindow: chunkFrom = chunkTo = 0
             if chunkFrom > chunkTo: chunkFrom = 0
 
-            for chunk in range(chunkFrom, chunkTo+1):
-                nsChunkFrom  = nsToMin + chunk*chunkSamples
-                nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
-                if nsChunkFrom == nsChunkTo: continue
-                time         = np.arange(nsChunkFrom, nsChunkTo) / self._fsPlot
-                data         = self._buffer2.read(nsChunkFrom, nsChunkTo)
-                for line in range(self.lineCount):
-                    self._curves[line][chunk].setData(time,
-                        data[line,:]*self._yScale
-                        + self._yOffset + line*self._yGap)
+            try:
+                for chunk in range(chunkFrom, chunkTo+1):
+                    nsChunkFrom  = nsToMin + chunk*chunkSamples
+                    nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
+                    if nsChunkFrom == nsChunkTo: continue
+                    time         = np.arange(nsChunkFrom, nsChunkTo) / self._fsPlot
+                    data         = self._buffer2.read(nsChunkFrom, nsChunkTo)
+                    for line in range(self.lineCount):
+                        self._curves[line][chunk].setData(time,
+                            data[line,:]*self._yScale
+                            + self._yOffset + line*self._yGap)
+            except:
+                log.info('nsRange %d, chunkSamples %d, nsFrom %d, nsFromMin %d, '
+                    'chunkFrom %d, nsTo %d, nsToMin %d, chunkTo %d, chunk %d, '
+                    'line %d', nsRange, chunkSamples, nsFrom, nsFromMin,
+                    chunkFrom, nsTo, nsToMin, chunkTo, chunk, line)
+                raise
 
     def refresh(self):
         with self._refreshLock:
@@ -1038,7 +1047,7 @@ class FFTChannel(BaseChannel):
             if hdf5.contains(hdf5Node):
                 raise NameError('HDF5 node %s already exists' % hdf5Node)
             hdf5.createEArray(hdf5Node, tb.Float64Atom(), (0,lineCount),
-                '', filters, expectedrows=fs*60*30)    # 30 minutes
+                '', hdf5Filters, expectedrows=fs*60*30)    # 30 minutes
             hdf5.setNodeAttr(hdf5Node, 'fs', fs)
 
         self.initPlot()
@@ -1110,7 +1119,7 @@ class BaseEpochChannel(BaseChannel):
             if hdf5.contains(hdf5Node):
                 raise NameError('HDF5 node %s already exists' % hdf5Node)
             hdf5.createEArray(hdf5Node, tb.Float64Atom(), (0,2), '',
-                filters, expectedrows=200)
+                hdf5Filters, expectedrows=200)
 
     def start(self, ts):
         # only start epoch
