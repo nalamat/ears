@@ -511,7 +511,7 @@ class ChannelPlotWidget(pg.PlotWidget):
     def stop(self):
         if self._timer.isActive():
             self._timer.stop()
-        self.updatePlot()
+            self.updatePlot()
 
     def updatePlot(self):
         try:
@@ -716,28 +716,6 @@ class AnalogChannel(BaseChannel):
     def fsPlot(self):
         return self._fsPlot
 
-    @fsPlot.setter
-    def fsPlot(self, value):
-        # verify
-        if hasattr(self, '_fsPlot') and self._fsPlot == value:
-            return
-
-        with self._refreshLock:
-            if value and value != self.fs:
-                # downsampling factor, i.e. number of consecutive samples to
-                # average, must be integer
-                self._dsFactor = round(self.fs/value)
-                # recalculate the plotting sampling frequency
-                value = self.fs / self._dsFactor
-            else:
-                self._dsFactor = None
-                value = self.fs
-
-            self._fsPlot = value
-
-            if not self._refreshBlock:
-                self._refresh()
-
     @property
     def linesVisible(self):
         return self._linesVisible
@@ -830,10 +808,19 @@ class AnalogChannel(BaseChannel):
         self._color          = color if isinstance(color, list) else [color]
         self._chunkSize      = chunkSize
         self.filter          = filter
-        self.fsPlot          = fsPlot
-
         self.linesVisible    = (True,) * lineCount
         self.linesGrandMean  = (grandMean,) * lineCount
+
+        # calculate an integer downsampling factor base on `fsPlot`
+        if fsPlot and fsPlot != self.fs:
+            # downsampling factor, i.e. number of consecutive samples to
+            # average, must be integer
+            self._dsFactor   = round(self.fs/fsPlot)
+            # recalculate the plotting sampling frequency
+            self._fsPlot     = self.fs / self._dsFactor
+        else:
+            self._dsFactor   = None
+            self._fsPlot     = self.fs
 
         buffer1Size          = int(self.plotWidget.xRange*self.fs    *1.2)
         buffer2Size          = int(self.plotWidget.xRange*self.fsPlot*1.2)
@@ -901,20 +888,17 @@ class AnalogChannel(BaseChannel):
     def _refresh(self):
         # reset buffers to the beginning of the current plot window
         nsRange = int(self.plotWidget.xRange*self.fs)
-        self._buffer1.nsRead  = self._buffer1.nsRead  // nsRange * nsRange
+        self._buffer1.nsRead    = self._buffer1.nsRead    // nsRange * nsRange
         nsRange = int(self.plotWidget.xRange*self.fsPlot)
         self._buffer2.nsWritten = self._buffer2.nsWritten // nsRange * nsRange
         # self._chunkLast = 0
 
     def initPlot(self):
         # prepare plotting chunks
-        chunkCount = int(np.ceil(self.plotWidget.xRange/self._chunkSize))
-        self._curves = [[None]*chunkCount for i in range(self.lineCount)]
+        self._chunkCount = int(np.ceil(self.plotWidget.xRange/self._chunkSize))
+        self._curves = [[None]*self._chunkCount for i in range(self.lineCount)]
         for i in range(self.lineCount):
-            # line = pg.InfiniteLine(i*self._yGap,0, pen=pg.mkPen((150,150,150),
-            #     style=QtCore.Qt.DashLine, cosmetic=True))
-            # self.plotWidget.addItem(line)
-            for j in range(chunkCount):
+            for j in range(self._chunkCount):
                 self._curves[i][j] = self.plotWidget.plot([], [],
                     pen=self._color[i % len(self._color)])
                 self._curves[i][j].setVisible(self.linesVisible[i])
@@ -952,33 +936,36 @@ class AnalogChannel(BaseChannel):
             chunkSamples = int(self._chunkSize*self._fsPlot)
 
             nsFrom       = self._buffer2.nsRead
-            nsFromMin    = int(nsFrom//nsRange*nsRange)
-            chunkFrom    = int((nsFrom-nsFromMin)//chunkSamples)
+            nsFromMin    = nsFrom // nsRange * nsRange
+            chunkFrom    = (nsFrom - nsFromMin) // chunkSamples
 
             nsTo         = self._buffer2.nsWritten
-            nsToMin      = int(nsTo//nsRange*nsRange)
-            chunkTo      = int((nsTo-nsToMin)//chunkSamples)
+            nsToMin      = nsTo // nsRange * nsRange
+            chunkTo      = (nsTo - nsToMin) // chunkSamples
+            chunkTo      = min(chunkTo, self._chunkCount-1)
 
             # when plot advances to next time window
             # if nextWindow: chunkFrom = chunkTo = 0
-            if chunkFrom > chunkTo: chunkFrom = 0
+            if chunkTo < chunkFrom: chunkFrom = 0
 
             try:
                 for chunk in range(chunkFrom, chunkTo+1):
                     nsChunkFrom  = nsToMin + chunk*chunkSamples
                     nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
                     if nsChunkFrom == nsChunkTo: continue
-                    time         = np.arange(nsChunkFrom, nsChunkTo) / self._fsPlot
+                    time         = np.arange(nsChunkFrom,
+                                   nsChunkTo) / self._fsPlot
                     data         = self._buffer2.read(nsChunkFrom, nsChunkTo)
                     for line in range(self.lineCount):
                         self._curves[line][chunk].setData(time,
                             data[line,:]*self._yScale
                             + self._yOffset + line*self._yGap)
             except:
-                log.info('nsRange %d, chunkSamples %d, nsFrom %d, nsFromMin %d, '
-                    'chunkFrom %d, nsTo %d, nsToMin %d, chunkTo %d, chunk %d, '
-                    'line %d', nsRange, chunkSamples, nsFrom, nsFromMin,
-                    chunkFrom, nsTo, nsToMin, chunkTo, chunk, line)
+                log.info('nsRange %d, chunkSamples %d, nsFrom %d, '
+                    'nsFromMin %d, chunkFrom %d, nsTo %d, nsToMin %d, '
+                    'chunkTo %d, chunk %d, line %d', nsRange, chunkSamples,
+                    nsFrom, nsFromMin, chunkFrom, nsTo, nsToMin, chunkTo,
+                    chunk, line)
                 raise
 
     def refresh(self):
