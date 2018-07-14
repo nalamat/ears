@@ -138,14 +138,17 @@ class ScrollingPlotWidget(pg.PlotWidget):
             cosmetic=True)
 
         # init x grid (vertical)
-        self._xGridMajor = [None] * int(np.ceil(xRange/xGrid)-1)
-        self._xGridMinor = [None] * int(np.ceil(xRange/xGrid))
-        for i in range(len(self._xGridMajor)):
-            self._xGridMajor[i] = pg.InfiniteLine(None, 90, pen=gridMajorPen)
-            self.addItem(self._xGridMajor[i])
-        for i in range(len(self._xGridMinor)):
-            self._xGridMinor[i] = pg.InfiniteLine(None, 90, pen=gridMinorPen)
-            self.addItem(self._xGridMinor[i])
+        if xGrid:
+            self._xGridMajor = [None] * int(np.ceil(xRange/xGrid)-1)
+            self._xGridMinor = [None] * int(np.ceil(xRange/xGrid))
+            for i in range(len(self._xGridMajor)):
+                line = pg.InfiniteLine(None, 90, pen=gridMajorPen)
+                self.addItem(line)
+                self._xGridMajor[i] = line
+            for i in range(len(self._xGridMinor)):
+                line = pg.InfiniteLine(None, 90, pen=gridMinorPen)
+                self.addItem(line)
+                self._xGridMinor[i] = line
 
         # draw x grid and ticks
         self.getAxis('top').setStyle(tickLength=0)
@@ -167,6 +170,8 @@ class ScrollingPlotWidget(pg.PlotWidget):
 
     def _updateXAxis(self, xMin=0):
         '''Update X ticks and grid'''
+
+        if not self._xGrid: return
 
         # update vertical grid
         for i in range(len(self._xGridMajor)):
@@ -254,6 +259,103 @@ class ScrollingPlotWidget(pg.PlotWidget):
 
         except:
             log.exception('Failed to update plot, stopping plot timer')
+            self._timer.stop()
+
+
+class FFTPlotWidget(pg.PlotWidget):
+    # '''A widget for plotting analog traces and epochs in a scrolling window.'''
+
+    @property
+    def fps(self):
+        '''Target rate of plotting in frames per second.'''
+        return self._fps
+
+    @property
+    def measuredFPS(self):
+        '''Actual rate of plotting in frames per second.'''
+        return self._measuredFPS
+
+    def __init__(self, xLimits=(0,5e-3), yLimits=(-5,5), fps=60,
+            *args, **kwargs):
+        '''
+        Args:
+            xLimits (tuple of 2 floats):
+            yLimits (tuple of 2 floats): Minimum and maximum values shown on the
+                y-axis. Defaults to (1,-1).
+            fps (float): Target plotting rate in frames per second.
+                Defaults to 60.
+        '''
+
+        super().__init__(*args, **kwargs)
+
+        # should not change after __init__
+        self._xLimits       = xLimits
+        self._yLimits       = yLimits
+        self._fps           = fps
+
+        self._measuredFPS   = 0
+        self._updateLast    = None
+        self._updateTimes   = []    # keep last update times for measuring FPS
+
+        self._timer         = QtCore.QTimer()
+        self._timer.timeout.connect(self.update)
+        self._timer.setInterval(1000/self.fps)
+
+        self.setBackground('w')
+        self.setMouseEnabled(False, False)
+        self.setMenuEnabled(False)
+        self.setClipToView(False)
+        self.disableAutoRange()
+        self.setRange(xRange=xLimits, yRange=yLimits, padding=0)
+        self.setLimits(xMin=xLimits[0], xMax=xLimits[1],
+            yMin=yLimits[0], yMax=yLimits[1])
+        self.hideButtons()
+        self.showGrid(x=True, y=True, alpha=0.5)
+
+        # draw all axis as black (draw box)
+        self.getAxis('left'  ).setPen(pg.mkPen('k'))
+        self.getAxis('bottom').setPen(pg.mkPen('k'))
+        self.getAxis('right' ).setPen(pg.mkPen('k'))
+        self.getAxis('top'   ).setPen(pg.mkPen('k'))
+        self.getAxis('bottom').setTicks([])
+        self.getAxis('right' ).setTicks([])
+        self.getAxis('right' ).show()
+        self.getAxis('top'   ).show()
+
+        # set axis labels
+        self.getAxis('top'   ).setLabel('<br />Frequency (kHz)')
+
+    def start(self):
+        if not self._timer.isActive():
+            self._updateLast = dt.datetime.now()
+            self._timer.start()
+
+    def stop(self):
+        if self._timer.isActive():
+            self._timer.stop()
+            self.update()
+            self._updateLast = None
+
+    def update(self):
+        try:
+            # log.debug('Updating plot')
+
+            # measure the actual fps
+            if self._updateLast is not None:
+                updateTime = (dt.datetime.now() -
+                    self._updateLast).total_seconds()
+                self._updateTimes.append(updateTime)
+                if len(self._updateTimes)>60:
+                    self._updateTimes.pop(0)
+                updateMean = np.mean(self._updateTimes)
+                fps = 1/updateMean if updateMean else 0
+                self._measuredFPS = fps
+            self._updateLast = dt.datetime.now()
+
+
+
+        except:
+            log.exception('Failed to update FFT plot, stopping plot timer')
             self._timer.stop()
 
 
@@ -702,65 +804,201 @@ class AnalogChannel(BaseChannel):
             self._refresh()
 
 
-class FFTChannel(BaseChannel):
+class MultiLine(pg.QtGui.QGraphicsPathItem):
+    def __init__(self, pen):
+        super().__init__()
+        self.setPen(pg.mkPen(pen))
+    def shape(self):
+        return pg.QtGui.QGraphicsItem.shape(self)
+    def boundingRect(self):
+        return self.path().boundingRect()
 
-    def __init__(self, fs, plotWidget=None, label=None, labelOffset=0,
-        source=None, hdf5Node=None, lineCount=1, yScale=1, yOffset=0,
-        yGap=1, color=list('rgbcmyk'), chunkSize=.5, filter=(None,None),
-        fsPlot=5e3):
+    def setData(self, x, y):
+        connect = np.ones(x.shape, dtype=bool)
+        connect[:,-1] = 0 # don't draw the segment between each trace
+        path = pg.arrayToQPath(x.flatten(), y.flatten(), connect.flatten())
+        self.setPath(path)
+
+
+class AnalogChannelFast(AnalogChannel):
+    @property
+    def linesVisible(self):
+        return super().linesVisible
+
+    @linesVisible.setter
+    def linesVisible(self, value):
+        # verify
+        if not isinstance(value, tuple):
+            raise TypeError('Value should be a tuple')
+        if len(value) != self.lineCount:
+            raise ValueError('Value should have exactly `lineCount` elements')
+        for v in value:
+            if not isinstance(v, bool):
+                raise ValueError('All elements must be `bool` instances')
+
+        if hasattr(self, '_linesVisible') and self._linesVisible == value:
+            return
+
+        with self._refreshLock:
+            # save
+            self._linesVisible = value
+
+            # apply
+            if hasattr(self, '_curves'):
+                for curve in self._curves:
+                    curve.setVisible(value[0])
+
+    def __init__(self, fs, plotWidget=None, hdf5Node=None, source=None,
+            label=None, labelOffset=0, lineCount=1, yScale=1, yOffset=0,
+            yGap=1, color=list('rgbcmyk'), chunkSize=.5, filter=(None,None),
+            fsPlot=5e3, grandMean=False, threshold=0):
         '''
         Args:
-        fs (float): Actual sampling frequency of the channel in Hz.
-        plotWidget (ScrollingPlotWidget): Defaults to None.
-        label (str or list of str): ...
-        labelOffset (float): ...
-        source (BaseChannel): ...
-        hdf5Node (str): Path of the node to store data in HDF5 file.
-        Defaults to None.
-        lineCount (int): Number of lines. Defaults to 1.
-        yScale (float): In-place scaling factor for indivudal lines.
-        Defaults to 1.
-        yOffset (float): Defaults to 0.
-        yGap (float): The gap between multiple lines. Defaults to 10.
-        color (list of str or tuple): Defaults to list('rgbcmyk').
-        chunkSize (float): In seconds. Defaults to 0.5.
-        filter (tuple of 2 floats): Lower and higher cutoff frequencies.
-        fsPlot (float): Plotting sampling frequency in Hz. Defaults to 5e3.
+            fs (float): Actual sampling frequency of the channel in Hz.
+            plotWidget (ScrollingPlotWidget): Defaults to None.
+            hdf5Node (str): Path of the node to store data in HDF5 file.
+                Defaults to None.
+            source (BaseChannel): ...
+            label (str or list of str): ...
+            labelOffset (float): ...
+            lineCount (int): Number of lines. Defaults to 1.
+            yScale (float): In-place scaling factor for indivudal lines.
+                Defaults to 1.
+            yOffset (float): Defaults to 0.
+            yGap (float): The gap between multiple lines. Defaults to 10.
+            color (list of str or tuple): Defaults to list('rgbcmyk').
+            chunkSize (float): In seconds. Defaults to 0.5.
+            filter (tuple of 2 floats): Lower and higher cutoff frequencies.
+            fsPlot (float): Plotting sampling frequency in Hz. Defaults to 5e3.
         '''
 
-        labelOffset = np.arange(lineCount)*yGap+yOffset+labelOffset
-        super().__init__(plotWidget, label, labelOffset, source)
+        BaseChannel.__init__(self, source)
 
-        self._refreshBlock = True
-        self._refreshLock  = threading.Lock()
+        self._refreshBlock   = True
+        self._refreshLock    = threading.Lock()
 
-        self._fs           = fs
-        self._hdf5Node     = hdf5Node
-        self._lineCount    = lineCount
-        self.yScale        = yScale
-        self._yOffset      = yOffset
-        self._yGap         = yGap
-        self._color        = color if isinstance(color, list) else [color]
-        self._chunkSize    = chunkSize
-        self.filter        = filter
-        self.fsPlot        = fsPlot
+        self._fs             = fs
+        self._plotWidget     = plotWidget
+        self._hdf5Node       = hdf5Node
+        self._lineCount      = lineCount
+        self.yScale          = yScale
+        self._yOffset        = yOffset
+        self._yGap           = yGap
+        self._color          = color if isinstance(color, list) else [color]
+        self._chunkSize      = chunkSize
+        self.filter          = filter
+        self.linesVisible    = (True,) * lineCount
+        self.linesGrandMean  = (grandMean,) * lineCount
+        self.threshold       = threshold
 
-        buffer1Size        = int(self.plotWidget.xRange*self.fs    *1.2)
-        buffer2Size        = int(self.plotWidget.xRange*self.fsPlot*1.2)
-        # self._bufferX      = misc.CircularBuffer((lineCount, buffer1Size))
-        self._buffer1      = misc.CircularBuffer((lineCount, buffer1Size))
-        self._buffer2      = misc.CircularBuffer((lineCount, buffer2Size))
+        # calculate an integer downsampling factor base on `fsPlot`
+        if fsPlot and fsPlot != self.fs:
+            # downsampling factor, i.e. number of consecutive samples to
+            # average, must be integer
+            self._dsFactor   = round(self.fs/fsPlot)
+            # recalculate the plotting sampling frequency
+            self._fsPlot     = self.fs / self._dsFactor
+        else:
+            self._dsFactor   = None
+            self._fsPlot     = self.fs
 
-        self._refreshBlock = False
+        buffer1Size          = int(self.plotWidget.xRange*self.fs    *1.2)
+        buffer2Size          = int(self.plotWidget.xRange*self.fsPlot*1.2)
+        # self._bufferX        = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer1        = misc.CircularBuffer((lineCount, buffer1Size))
+        self._buffer2        = misc.CircularBuffer((lineCount, buffer2Size))
 
+        if hdf5Node is not None:
+            if hdf5.contains(hdf5Node):
+                raise NameError('HDF5 node %s already exists' % hdf5Node)
+            hdf5.createEArray(hdf5Node, tb.Float32Atom(), (0,lineCount),
+                '', hdf5Filters, expectedrows=fs*60*30)    # 30 minutes
+            hdf5.setNodeAttr(hdf5Node, 'fs', fs)
+
+        if plotWidget:
+            labelOffset += np.arange(lineCount)*yGap+yOffset
+            plotWidget.add(self, label, labelOffset)
+
+        # threshold guide lines
+        pen = pg.mkPen((255,0,0,150), style=QtCore.Qt.DashLine, cosmetic=True)
+        self._thresholdGuides = [[None]*2 for i in range(self.lineCount)]
+        for i in range(self.lineCount):
+            for j in range(2):
+                y = (self._yOffset + i*self._yGap +
+                    self.yScale*self.threshold*(j*2-1))
+                line = pg.InfiniteLine(y, 0, pen=pen)
+                line.setVisible(bool(self.threshold))
+                self.plotWidget.addItem(line)
+                self._thresholdGuides[i][j] = line
+
+        # prepare plotting chunks
+        self._chunkCount = int(np.ceil(self.plotWidget.xRange/self._chunkSize))
+        self._curves = [None]*self._chunkCount
+        for j in range(self._chunkCount):
+            self._curves[j] = MultiLine(self._color[0 % len(self._color)])
+            self._curves[j].setVisible(self.linesVisible[0])
+            self.plotWidget.addItem(self._curves[j])
+
+        self._refreshBlock   = False
         self._refresh()
 
         self._processThread = threading.Thread(target=self._processLoop)
         self._processThread.daemon = True
         self._processThread.start()
 
-        self.initPlot()
+    def update(self, ts=None, tsMin=None, nextWindow=False):
+        if not self._buffer2.updated: return
 
+        with self._refreshLock, self._buffer2:
+            nsRange      = int(self.plotWidget.xRange*self._fsPlot)
+            chunkSamples = int(self._chunkSize*self._fsPlot)
+
+            nsFrom       = self._buffer2.nsRead
+            nsFromMin    = nsFrom // nsRange * nsRange
+            chunkFrom    = (nsFrom - nsFromMin) // chunkSamples
+
+            nsTo         = self._buffer2.nsWritten
+            nsToMin      = nsTo // nsRange * nsRange
+            chunkTo      = (nsTo - nsToMin) // chunkSamples
+            chunkTo      = min(chunkTo, self._chunkCount-1)
+
+            # when plot advances to next time window
+            # if nextWindow: chunkFrom = chunkTo = 0
+            if chunkTo < chunkFrom: chunkFrom = 0
+
+            try:
+                for chunk in range(chunkFrom, chunkTo+1):
+                    nsChunkFrom  = nsToMin + chunk*chunkSamples
+                    nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
+                    if nsChunkFrom == nsChunkTo: continue
+                    time         = np.arange(nsChunkFrom,
+                                   nsChunkTo) / self._fsPlot
+                    data         = self._buffer2.read(nsChunkFrom, nsChunkTo)
+                    time = time[np.newaxis,:].repeat(self.lineCount, axis=0)
+                    lines = np.arange(self.lineCount)[:,np.newaxis]
+                    lines = lines.repeat(data.shape[-1], axis=1)*self._yGap
+                    self._curves[chunk].setData(time,
+                        data*self._yScale + self._yOffset + lines)
+            except:
+                log.info('nsRange %d, chunkSamples %d, nsFrom %d, '
+                    'nsFromMin %d, chunkFrom %d, nsTo %d, nsToMin %d, '
+                    'chunkTo %d, chunk %d', nsRange, chunkSamples,
+                    nsFrom, nsFromMin, chunkFrom, nsTo, nsToMin, chunkTo,
+                    chunk)
+                raise
+
+            # update threshold guide lines
+            # if self.threshold:
+            #     buffer2Size = self._buffer2.shape[self._buffer2.axis]
+            #     frm = max(0, self._buffer2.nsWritten-buffer2Size)
+            #     data = self._buffer2.read(frm=frm, advance=False)
+            #     if data.shape[-1]:
+            #         for i in range(self.lineCount):
+            #             sigma = np.median(np.abs(data[i,:]))
+            #             for j in range(2):
+            #                 y = (self._yOffset + i*self._yGap +
+            #                     self.yScale*self.threshold*sigma*(j*2-1))
+            #                 self._thresholdGuides[i][j].setValue(y)
 
 
 # class AnalogGenerator():

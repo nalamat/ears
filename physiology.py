@@ -118,13 +118,8 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.timePlot.timeBase = self.physiologyTrace
         self.timePlot.start()
 
-        # self.fftPlot          = plotting.ScrollingPlotWidget(
-        #                         xLimits=(0, 5e3), xGrid=1e3,
-        #                         xLabel='Frequency (kHz)',
-        #                         xTicksFormat=lambda x: '%g' % (x/1e3),
-        #                         yLimits=(-4,15),
-        #                         yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
-        #                         timePlot=False)
+        self.fftPlot          = plotting.FFTPlotWidget(
+                                xLimits=(0, 5e3),  yLimits=(-4,15))
 
         # self.spikePlot        = plotting.ScrollingPlotWidget(
         #                         xLimits=(-5e-3, 5e-3), xGrid=1e-3,
@@ -136,12 +131,12 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
         layout = QtWidgets.QGridLayout()
         layout.setColumnStretch(0,2)
-        # layout.setColumnStretch(1,1)
+        layout.setColumnStretch(1,1)
         # layout.setColumnStretch(2,1)
         layout.setContentsMargins(0,0,0,0)
         layout.setSpacing(0)
         layout.addWidget(self.timePlot  , 0, 0)
-        # layout.addWidget(self.fftPlot   , 0, 1)
+        layout.addWidget(self.fftPlot   , 0, 1)
         # layout.addWidget(self.spikePlot , 0, 2)
 
         # for i in range(4):
@@ -430,6 +425,8 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
     def physiologyInputDataAcquired(self, task, data):
         self.physiologyTrace.append(data)
+        # for i in range(len(self.traces)):
+        #     self.traces[i].append(data[i,:])
         # pass
 
     ########################################
