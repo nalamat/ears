@@ -130,4 +130,6 @@ def physiologyOutputDataNeeded(task, nsWritten, nsNeeded):
     data = np.random.randn(task.lineCount, nsNeeded)
     t = np.arange(nsWritten, nsWritten+nsNeeded) / task.fs
     data += np.sin(2*np.pi*1*t)*10
+    data += np.sin(2*np.pi*100*t)*.5
+    data += np.sin(2*np.pi*500*t)*.5
     return data

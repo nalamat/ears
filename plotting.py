@@ -266,6 +266,15 @@ class FFTPlotWidget(pg.PlotWidget):
     # '''A widget for plotting analog traces and epochs in a scrolling window.'''
 
     @property
+    def fs(self):
+        '''Sampling frequency'''
+        return self._fs
+
+    @property
+    def lineCount(self):
+        return self._lineCount
+
+    @property
     def fps(self):
         '''Target rate of plotting in frames per second.'''
         return self._fps
@@ -275,8 +284,9 @@ class FFTPlotWidget(pg.PlotWidget):
         '''Actual rate of plotting in frames per second.'''
         return self._measuredFPS
 
-    def __init__(self, xLimits=(0,5e-3), yLimits=(-5,5), fps=60,
-            *args, **kwargs):
+    def __init__(self, fs, lineCount=1, xLimits=(0,5e-3), yLimits=(-5,5),
+            yScale=1, yOffset=0, yGap=1, chunk=.2, color=list('rgbcmyk'),
+            fps=60, *args, **kwargs):
         '''
         Args:
             xLimits (tuple of 2 floats):
@@ -289,9 +299,19 @@ class FFTPlotWidget(pg.PlotWidget):
         super().__init__(*args, **kwargs)
 
         # should not change after __init__
+        self._fs            = fs
+        self._lineCount     = lineCount
         self._xLimits       = xLimits
         self._yLimits       = yLimits
+        self._yScale        = yScale
+        self._yOffset       = yOffset
+        self._yGap          = yGap
+        self._chunk         = chunk
+        self._color         = color if isinstance(color, list) else [color]
         self._fps           = fps
+
+        buffer1Size         = int(self.fs*2)
+        self._buffer1       = misc.CircularBuffer((lineCount, buffer1Size))
 
         self._measuredFPS   = 0
         self._updateLast    = None
@@ -325,6 +345,12 @@ class FFTPlotWidget(pg.PlotWidget):
         # set axis labels
         self.getAxis('top'   ).setLabel('<br />Frequency (kHz)')
 
+        # prepare plots
+        self._curves = [None]*self.lineCount
+        for i in range(self.lineCount):
+            self._curves[i] = self.plot([], [],
+                pen=self._color[i % len(self._color)])
+
     def start(self):
         if not self._timer.isActive():
             self._updateLast = dt.datetime.now()
@@ -335,6 +361,23 @@ class FFTPlotWidget(pg.PlotWidget):
             self._timer.stop()
             self.update()
             self._updateLast = None
+
+    def append(self, data):
+        '''
+        Args:
+            data (numpy.array): 1D for single line or 2D for multiple lines
+                with the following format: lines x samples
+        '''
+        # some format checking
+        if data.ndim == 1: data = np.array([data])
+        if data.ndim != 2: raise ValueError('Need 1 or 2-dimensional data')
+        if data.shape[0] != self.lineCount: raise ValueError('Size of first '
+            'dimension of data should match line count')
+
+        # keep a local copy of data in a circular buffer
+        # for online processing and fast plotting
+        with self._buffer1:
+            self._buffer1.write(data)
 
     def update(self):
         try:
@@ -352,7 +395,22 @@ class FFTPlotWidget(pg.PlotWidget):
                 self._measuredFPS = fps
             self._updateLast = dt.datetime.now()
 
+            if not self._buffer1.updated: return
+            # if self._buffer1.nsAvailable<self._chunk*self.fs: return
 
+            with self._buffer1: # self._refreshLock
+                to = self._buffer1.nsWritten
+                frm = to-int(self._chunk*self.fs)
+                if frm < 0: return
+                data = self._buffer1.read(frm, to)
+                freq = np.fft.fftfreq(data.shape[-1], 1/self.fs)
+                mask = (self._xLimits[0]<=freq) & (freq<=self._xLimits[1])
+                freq = freq[mask]
+                for line in range(self.lineCount):
+                    ps = np.abs(np.fft.fft(data[line,:]))**2 / data.shape[-1]
+                    ps = ps[mask]
+                    self._curves[line].setData(freq, ps*self._yScale +
+                        self._yOffset + line*self._yGap)
 
         except:
             log.exception('Failed to update FFT plot, stopping plot timer')
