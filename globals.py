@@ -69,6 +69,7 @@ session = Context(
     Item('totalReward'       , ''                 , float, 0                 ),
     Item('dataViable'        , 'Data viable'      , bool , False             ),
     Item('computerName'      , ''                 , str  , ''                ),
+    Item('commitHash'        , ''                 , str  , ''                ),
     )
 
 '''Calibration settings.

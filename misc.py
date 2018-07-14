@@ -22,7 +22,8 @@ import logging
 import pathlib
 import functools
 import threading
-import numpy     as     np
+import subprocess
+import numpy      as     np
 
 
 log = logging.getLogger(__name__)
@@ -90,6 +91,14 @@ def absolutePath(file, directory=None):
         return os.path.realpath(
             os.path.join(directory, file)).replace('\\', '/')
 
+def getCommitHash():
+    '''Return the current commit hash (HEAD)'''
+    try:
+        proc = subprocess.run(['git', 'log', '-1', '--pretty="%H"'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return proc.stdout.decode().strip(' \t\r\n"')
+    except:
+        return ''
 
 class Queue(queue.Queue):
     def clear(self):
@@ -390,7 +399,9 @@ if __name__=='__main__':
     # print(len(stream))
 
     # @logExceptions()
-    def func():
-        raise ValueError()
+    # def func():
+    #     raise ValueError()
+    #
+    # func()
 
-    func()
+    print(getCommitHash())

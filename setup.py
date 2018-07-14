@@ -277,6 +277,7 @@ class SetupWindow(QtWidgets.QDialog):
         gb.session.rove.value               = rove
         gb.session.sessionTime.value        = gb.sessionTimeComplete
         gb.session.computerName.value       = platform.node()
+        gb.session.commitHash.value         = misc.getCommitHash()
 
         super().accept()
 
