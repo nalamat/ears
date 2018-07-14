@@ -175,7 +175,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         micNode           = '/trace/mic'     if physiology else None
 
         # plot widget
-        self.plot         = plotting.ChannelPlotWidget(xRange=10,
+        self.plot         = plotting.ScrollingPlotWidget(xRange=10,
                             yLimits=(-1,7.5), yGrid=[-.5,0,1,2,2.5,4.5,5,6,7])
 
         # analog traces
@@ -1012,7 +1012,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         '''Called by `updateTimer` every 20ms.'''
         ts = daqs.getTS()
         gb.status.ts .value         = '%02d:%05.2f' % (ts//60, ts%60)
-        gb.status.fps.value         = '%.1f' % self.plot.calculatedFPS
+        gb.status.fps.value         = '%.1f' % self.plot.measuredFPS
         gb.status.totalReward.value = '%.3f' % self.pump.getInfused()
 
     ########################################

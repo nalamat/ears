@@ -89,7 +89,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         lineLabels            = list(map(str, np.arange(lineCount)+1))
         behavior              = gb.behaviorWindow
 
-        self.timePlot         = plotting.ChannelPlotWidget(xRange=10,
+        self.timePlot         = plotting.ScrollingPlotWidget(xRange=10,
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
@@ -118,21 +118,21 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.timePlot.timeBase = self.physiologyTrace
         self.timePlot.start()
 
-        self.fftPlot          = plotting.ChannelPlotWidget(
-                                xLimits=(0, 5e3), xGrid=1e3,
-                                xLabel='Frequency (kHz)',
-                                xTicksFormat=lambda x: '%g' % (x/1e3),
-                                yLimits=(-4,15),
-                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
-                                timePlot=False)
+        # self.fftPlot          = plotting.ScrollingPlotWidget(
+        #                         xLimits=(0, 5e3), xGrid=1e3,
+        #                         xLabel='Frequency (kHz)',
+        #                         xTicksFormat=lambda x: '%g' % (x/1e3),
+        #                         yLimits=(-4,15),
+        #                         yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
+        #                         timePlot=False)
 
-        self.spikePlot        = plotting.ChannelPlotWidget(
-                                xLimits=(-5e-3, 5e-3), xGrid=1e-3,
-                                xLabel='Time (ms)',
-                                xTicksFormat=lambda x: '%g' % (x*1e3),
-                                yLimits=(-4,15),
-                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
-                                timePlot=False)
+        # self.spikePlot        = plotting.ScrollingPlotWidget(
+        #                         xLimits=(-5e-3, 5e-3), xGrid=1e-3,
+        #                         xLabel='Time (ms)',
+        #                         xTicksFormat=lambda x: '%g' % (x*1e3),
+        #                         yLimits=(-4,15),
+        #                         yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
+        #                         timePlot=False)
 
         layout = QtWidgets.QGridLayout()
         layout.setColumnStretch(0,2)
@@ -143,6 +143,28 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         layout.addWidget(self.timePlot  , 0, 0)
         # layout.addWidget(self.fftPlot   , 0, 1)
         # layout.addWidget(self.spikePlot , 0, 2)
+
+        # for i in range(4):
+        #     for j in range(4):
+        #         for k in range(3):
+        #             plot = plotting.ScrollingPlotWidget(timePlot=False,
+        #                 xLimits=(-5e-3, 5e-3), xGrid=1e-3, xLabel='Time (ms)',
+        #                 xTicksFormat=lambda x: '%g' % (x*1e3),
+        #                 yLimits=(-2e-3,2e-3), yGrid=.5e-3)
+        #             # plot.layout().setContentsMargins(0,0,0,0)
+        #             plot.setLabel('left','')
+        #             plot.setLabel('top','<br/><br/><br/><br/><br/>')
+        #             plot.setLabel('top','')
+        #             plot.getAxis('left').setWidth(0)
+        #             plot.getAxis('top').setHeight(0)
+        #             plot.getAxis('right').setWidth(0)
+        #             plot.getAxis('bottom').setHeight(0)
+        #             if k == 0:
+        #                 layout.addWidget(plot, i*2, j*2, 1, 2)
+        #             elif k == 1:
+        #                 layout.addWidget(plot, i*2+1, j*2)
+        #             elif k == 2:
+        #                 layout.addWidget(plot, i*2+1, j*2+1)
 
         frame = QtWidgets.QFrame()
         frame.setLayout(layout)
@@ -211,8 +233,8 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.lblYScale = QtWidgets.QLabel('Scale: %d dB' % yScale)
         layout.addWidget(self.lblYScale)
         self.sldYScale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sldYScale.setMinimum(-50)
-        self.sldYScale.setMaximum(30)
+        self.sldYScale.setMinimum(-60)
+        self.sldYScale.setMaximum(60)
         self.sldYScale.setSingleStep(5)
         self.sldYScale.setPageStep(5)
         self.sldYScale.setValue(yScale)
@@ -389,7 +411,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
     def updateGUI(self):
         '''Called by `updateTimer` every 50ms'''
         # settings.status.ts .value = '%.2f' % self.getTS()
-        # settings.status.fps.value = '%.1f' % self.plot.calculatedFPS
+        # settings.status.fps.value = '%.1f' % self.plot.measuredFPS
         pass
 
     ########################################
@@ -408,7 +430,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
     def physiologyInputDataAcquired(self, task, data):
         self.physiologyTrace.append(data)
-
+        # pass
 
     ########################################
     # house keeping
