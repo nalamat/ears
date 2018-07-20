@@ -858,7 +858,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             if gb.status.trialState.value in gb.trialStatesAwaiting:
                 self.evaluateParadigm()
             else:
-                self.verfyParadigm()
+                self.verifyParadigm()
         else:
             gb.status.trialType.value = self.forceTrialType
 
@@ -872,7 +872,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             if gb.status.trialState.value in gb.trialStatesAwaiting:
                 self.evaluateParadigm()
             else:
-                self.verfyParadigm()
+                self.verifyParadigm()
         else:
             gb.status.trialType.value = self.forceTrialType
 
