@@ -540,7 +540,7 @@ class AnalogInput(BaseAnalog):
 
     def __init__(self, lines, fs, samples, name=None,
             range=(-10.,10.), dataAcquired=None, dataChunk=100e-3,
-            bufDuration=30,
+            bufDuration=30, referenced=True,
             accurateFS=True, timebaseSrc=None, timebaseRate=None,
             startTrigger=None):
         '''
@@ -562,6 +562,10 @@ class AnalogInput(BaseAnalog):
             bufDuration (float): In infinite samples mode, determines how long
                 should the software buffer be in seconds. The actual buffer size
                 depends on the specified sampling rate.
+            referenced (bool): Referenced (AI GND) vs. non-referenced (AI SENSE)
+                measurement. See:
+                http://www.ni.com/white-paper/3344/en/
+                zone.ni.com/reference/en-XX/help/370466Y-01/measfunds/refsingleended/
             accurateFS (bool): If True, when device is not able to generate the
                 requested sampling frequency accurately, the task will fail and
                 a ValueError will be raised. If False, an inaccurate sampling
@@ -587,7 +591,8 @@ class AnalogInput(BaseAnalog):
                 'finite samples in `SIM` mode')
 
         if not SIM:
-            self._task.CreateAIVoltageChan(self.lines, None, mx.DAQmx_Val_RSE,
+            config = mx.DAQmx_Val_RSE if referenced else mx.DAQmx_Val_NRSE
+            self._task.CreateAIVoltageChan(self.lines, None, config,
                 *range, mx.DAQmx_Val_Volts, None)
 
         self._dataAcquired = misc.Event(dataAcquired)
