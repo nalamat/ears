@@ -155,7 +155,7 @@ trial = Context(
     Item('pokeDuration'    , 'Poke\nduration'    , float),
     Item('responseDuration', 'Response\nduration', float),
     Item('score'           , 'Score'             , str   ,
-        values=['HIT', 'MISS', 'CR', 'FA']              ),
+        values=['None', 'HIT', 'MISS', 'CR', 'FA']      ),    # TODO: fix cases?
     Item('response'        , ''                  , str   ,
         values=['None', 'Poke', 'Spout']                ),
     )

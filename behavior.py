@@ -1503,6 +1503,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             return
 
         elif gb.session.experimentMode.value == 'Passive':
+            gb.trial.score.value = 'None'
             gb.status.trialState.value = 'Awaiting random trigger'
             self.randomTrial()
 
@@ -2181,7 +2182,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 else:
                     text = str(item.value)
                 # instead of nans show an empty cell
-                if text == 'nan':
+                if text in ('nan', 'None'):
                     text = ''
                 # show only file name
                 if item.name in ('targetFile', 'maskerFile'):
