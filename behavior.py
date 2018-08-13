@@ -146,12 +146,14 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         # init HDF5 and pandas.DataFrame logging
         gb.session    .initData  ('/log/session'    )
-        gb.session    .appendData()
+        gb.session    .overwriteData()
         gb.calibration.initData  ('/log/calibration', columnHeaders=False)
-        gb.calibration.appendData()
+        gb.calibration.overwriteData()
         gb.paradigm   .initData  ('/log/paradigm'   , asString     =True )
         gb.trial      .initData  ('/log/trial'      )
         gb.performance.initData  ('/log/performance')
+
+        hdf5.flush()
 
         log.info('Session context: %s'    , str(gb.session    ))
         log.info('Calibration context: %s', str(gb.calibration))
@@ -305,11 +307,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         for item in gb.session:
             if item.name in ['subjectID', 'experimentName', 'experimentMode',
                     'recording']:
-                lbl = QtWidgets.QLabel(item.label + ':')
                 wig = QtWidgets.QLineEdit(item.value)
                 wig.setReadOnly(True)
             elif item.name == 'dataViable':
-                lbl = QtWidgets.QLabel(item.label + ':')
                 wig = QtWidgets.QCheckBox()
                 if item.value:
                     wig.setCheckState(QtCore.Qt.Checked)
@@ -317,11 +317,20 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     wig.setCheckState(QtCore.Qt.Unchecked)
                 callback = functools.partial(self.sessionChanged, item)
                 wig.stateChanged.connect(callback)
+            elif item.name == 'notes':
+                wig = QtWidgets.QPlainTextEdit(item.value)
+                wig.setMaximumHeight(50)
+                callback = functools.partial(self.sessionChanged, item)
+                wig.textChanged.connect(callback)
             else:
                 continue
+            lbl = QtWidgets.QLabel(item.label + ':')
             item.widget = wig
             layout.addWidget(lbl, layout.rowCount()  , 0)
-            layout.addWidget(wig, layout.rowCount()-1, 1)
+            if item.name == 'notes':
+                layout.addWidget(wig, layout.rowCount(), 0, 1, 2)
+            else:
+                layout.addWidget(wig, layout.rowCount()-1, 1)
 
         frame = QtWidgets.QFrame()
         frame.setLayout(layout)
@@ -678,7 +687,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     @gui.showExceptions
     def sessionChanged(self, item, *args):
         item.value = item.getWidgetValue()
-        gb.session.overwriteData()
+        # gb.session.overwriteData()
 
     @gui.showExceptions
     def paradigmChanged(self, item, *args):

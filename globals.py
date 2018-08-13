@@ -68,6 +68,7 @@ session = Context(
     Item('experimentDuration', ''                 , float, 0                 ),
     Item('totalReward'       , ''                 , float, 0                 ),
     Item('dataViable'        , 'Data viable'      , bool , False             ),
+    Item('notes'             , 'Notes'            , str  , ''                ),
     Item('computerName'      , ''                 , str  , ''                ),
     Item('commitHash'        , ''                 , str  , ''                ),
     )

@@ -80,6 +80,9 @@ class Item():
         elif isinstance(self.widget, QtWidgets.QComboBox):
             return self.widget.currentText()
 
+        elif isinstance(self.widget, QtWidgets.QPlainTextEdit):
+            return self.widget.toPlainText()
+
         else:
             raise NotImplementedError('Unspported widget "%s"' %
                 type(self.widget))
@@ -97,6 +100,9 @@ class Item():
 
         elif isinstance(self.widget, QtWidgets.QComboBox):
             self.widget.setCurrentText(str(value))
+
+        elif isinstance(self.widget, QtWidgets.QPlainTextEdit):
+            self.widget.setPlainText(str(value))
 
         else:
             raise NotImplementedError('Unsupported widget "%s"' %

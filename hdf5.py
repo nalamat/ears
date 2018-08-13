@@ -62,7 +62,7 @@ def open(*args, **kwargs):
 
 def close():
     global _fh
-    log.info('Stopping HDF5 thread')
+    # log.info('Stopping HDF5 thread')
     # _stop.set()
     # if _thread:
     #     while _thread.is_alive():
