@@ -189,8 +189,8 @@ class CircularBuffer():
         '''
         self._data         = np.zeros(shape, dtype)
         self._axis         = axis
-        self._nsWritten   = 0
-        self._nsRead    = 0
+        self._nsWritten    = 0
+        self._nsRead       = 0
         self._updatedEvent = threading.Event()
         self._lock         = threading.Lock()
 
@@ -308,27 +308,6 @@ class CircularBuffer():
         result = self._updatedEvent.isSet()
         if result: self._updatedEvent.clear()
         return result
-
-
-# class Channel():
-#     def __init__(self):
-#         _sink   = None
-#         _source = None
-#
-#     def write(self):
-#         raise NotImplementedError()
-#
-#     def read(self):
-#         raise NotImplementedError()
-#
-#     def connect(self, source=None, sink=None):
-#         if isinstance(source, Channel):
-#             self._source = source
-#             source._sink = self
-#
-#         if isinstance(sink, Channel):
-#             self._sink = sink
-#             source._source = self
 
 
 class Event():
