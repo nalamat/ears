@@ -26,6 +26,7 @@ import numpy     as np
 import datetime  as dt
 
 import misc
+import pipeline
 
 
 SIM = '--sim' in sys.argv
@@ -495,7 +496,7 @@ class BaseAnalog(BaseTask):
         # self.WaitUntilTaskDone(mx.DAQmx_Val_WaitInfinitely)
 
 
-class AnalogInput(BaseAnalog):
+class AnalogInput(BaseAnalog, pipeline.Sampled):
     @property
     def nsRead(self):
         '''Total number of samples read.'''
@@ -622,6 +623,8 @@ class AnalogInput(BaseAnalog):
         self._postInit(accurateFS, timebaseSrc, timebaseRate,
             startTrigger)
 
+        pipeline.Sampled.__init__(self, fs=self._fs, channels=self._lineCount)
+
         if SIM:
             self._simBuffer = misc.CircularBuffer((self.lineCount, bufSize))
             # set simulated acquisition interval
@@ -697,6 +700,8 @@ class AnalogInput(BaseAnalog):
         data = self._read()
         # pass data to all registered callbacks
         self.dataAcquired(self, data)
+        # pass data down into the pipeline
+        pipeline.Sampled.write(self, data)
 
     def read(self, ns=None, wait=True):
         '''Read samples from the device.

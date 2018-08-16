@@ -32,6 +32,7 @@ import daqs
 import misc
 import hdf5
 import config
+import pipeline
 import plotting
 import globals     as gb
 
@@ -93,11 +94,24 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
-        self.physiologyTrace  = plotting.AnalogChannel(physiologyFS,
-                                self.timePlot, label=lineLabels,
-                                hdf5Node='/trace/physiology',
-                                lineCount=lineCount, filter=(300,6e3),
-                                yScale=.1, yOffset=14, yGap=-1, grandMean=True)
+        # self.physiologyTrace  = plotting.AnalogChannel(physiologyFS,
+        #                         self.timePlot, label=lineLabels,
+        #                         hdf5Node='/trace/physiology',
+        #                         lineCount=lineCount, filter=(300,6e3),
+        #                         yScale=.1, yOffset=14, yGap=-1, grandMean=True)
+
+        self.physiologyTrace  = plotting.AnalogPlot(self.timePlot,
+                                label=lineLabels,
+                                yScale=.1, yOffset=14, yGap=-1)
+
+        self.dataThread   = pipeline.Thread()
+        self.grandAverage = pipeline.GrandAverage()
+        self.filter       = pipeline.LFilter(fl=300, fh=6e3)
+        self.downsample   = pipeline.DownsampleAverage(ds=6)
+
+        (daqs.physiologyInput | self.dataThread | self.filter
+            | self.grandAverage | self.downsample | self.physiologyTrace)
+
 
         # rectangular plots
         self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
@@ -238,24 +252,26 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.sldYScale.valueChanged.connect(self.sldYScaleValueChanged)
         layout.addWidget(self.sldYScale)
 
-        filterFL = int(self.physiologyTrace.filter[0])
+        # filterFL = int(self.physiologyTrace.filter[0])
+        filterFL = int(self.filter.fl)
         self.lblFlFilter = QtWidgets.QLabel('Lower cutoff: %d Hz' % filterFL)
         layout.addWidget(self.lblFlFilter)
         self.sldFilterFL = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sldFilterFL.setMinimum(0)
-        self.sldFilterFL.setMaximum(4e3)
+        self.sldFilterFL.setMaximum(2e3)
         self.sldFilterFL.setSingleStep(100)
         self.sldFilterFL.setPageStep(100)
         self.sldFilterFL.setValue(filterFL)
         self.sldFilterFL.valueChanged.connect(self.sldFilterFLValueChanged)
         layout.addWidget(self.sldFilterFL)
 
-        filterFH = int(self.physiologyTrace.filter[1])
+        # filterFH = int(self.physiologyTrace.filter[1])
+        filterFH = int(self.filter.fh)
         self.lblFhFilter = QtWidgets.QLabel('Higher cutoff: %d Hz' % filterFH)
         layout.addWidget(self.lblFhFilter)
         self.sldFilterFH = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.sldFilterFH.setMinimum(5e3)
-        self.sldFilterFH.setMaximum(20e3)
+        self.sldFilterFH.setMinimum(2e3)
+        self.sldFilterFH.setMaximum(15e3)
         self.sldFilterFH.setSingleStep(200)
         self.sldFilterFH.setPageStep(200)
         self.sldFilterFH.setValue(filterFH)
@@ -351,16 +367,20 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
     @gui.showExceptions
     def applyClicked(self, *args):
         # get values from widgets
-        self.physiologyTrace.refreshBlock   = True
+        # self.physiologyTrace.refreshBlock   = True
         self.physiologyTrace.yScale         = 10**(self.sldYScale.value()/20)
-        self.physiologyTrace.filter         = (self.sldFilterFL.value(),
-           self.sldFilterFH.value())
-        self.physiologyTrace.linesVisible   = tuple(
-            chk[0].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
-        self.physiologyTrace.linesGrandMean = tuple(
+        # self.physiologyTrace.filter         = (self.sldFilterFL.value(),
+        #    self.sldFilterFH.value())
+        self.filter.fl = self.sldFilterFL.value()
+        self.filter.fh = self.sldFilterFH.value()
+        # self.physiologyTrace.linesVisible   = tuple(
+        #     chk[0].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
+        # self.physiologyTrace.linesGrandMean = tuple(
+        #     chk[1].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
+        self.grandAverage.mask = tuple(
             chk[1].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
-        self.physiologyTrace.refreshBlock = False
-        self.physiologyTrace.refresh()
+        # self.physiologyTrace.refreshBlock = False
+        # self.physiologyTrace.refresh()
 
     @gui.showExceptions
     def sldYScaleValueChanged(self, value):
@@ -426,7 +446,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         pass
 
     def physiologyInputDataAcquired(self, task, data):
-        self.physiologyTrace.append(data)
+        # self.physiologyTrace.append(data)
         self.fftPlot.append(data)
         # for i in range(len(self.traces)):
         #     self.traces[i].append(data[i,:])

@@ -27,8 +27,9 @@ import datetime     as     dt
 import pyqtgraph    as     pg
 from   PyQt5        import QtCore, QtWidgets, QtGui
 
-import misc
 import hdf5
+import misc
+import pipeline
 
 
 log = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ class ScrollingPlotWidget(pg.PlotWidget):
 
     @timeBase.setter
     def timeBase(self, value):
-        if not isinstance(value, AnalogChannel):
+        if not isinstance(value, (AnalogChannel, AnalogPlot)):
             raise TypeError('`timeBase` can only be an instance '
                 'of `AnalogChannel`')
         self._timeBase = value
@@ -186,7 +187,7 @@ class ScrollingPlotWidget(pg.PlotWidget):
         self.getAxis('top').setTicks([xMajorTicks, xMinorTicks])
 
     def add(self, channel, label=None, labelOffset=0):
-        if not isinstance(channel, (AnalogChannel, BaseEpochChannel)):
+        if not isinstance(channel, (AnalogChannel, AnalogPlot, BaseEpochChannel)):
             raise TypeError('Plot should be an instance of AnalogChannel, '
                 'BaseEpochChannel or one of their subclasses')
         if channel in self._channels:
@@ -860,6 +861,137 @@ class AnalogChannel(BaseChannel):
     def refresh(self):
         with self._refreshLock:
             self._refresh()
+
+
+class AnalogPlot(pipeline.Sampled):
+    '''All-in-one class for storage and plotting of multiline analog signals.
+
+    Utilizes the `hdf5` module for storage in HDF5 file format.
+
+    Needs to be paired with a ScrollingPlotWidget for plotting.
+    '''
+
+    @property
+    def plotWidget(self):
+        return self._plotWidget
+
+    @property
+    def fs(self):
+        '''Sampling frequency'''
+        return self._fs
+
+    @property
+    def ns(self):
+        '''Total number of samples (per line) added to channel'''
+        # return self._ns
+        return self._buffer1.nsWritten
+
+    @property
+    def ts(self):
+        '''Last timestamp in seconds'''
+        return self.ns/self._fs
+
+    @property
+    def lineCount(self):
+        return self._lineCount
+
+    @property
+    def yScale(self):
+        return self._yScale
+
+    @yScale.setter
+    def yScale(self, value):
+        self._yScale = value
+
+    def __init__(self, plotWidget, label=None, labelOffset=0,
+            yScale=1, yOffset=0, yGap=1, color=list('rgbcmyk'), chunkSize=.5):
+
+        self._plotWidget     = plotWidget
+        self._label          = label
+        self._labelOffset    = labelOffset
+        self._yScale         = yScale
+        self._yOffset        = yOffset
+        self._yGap           = yGap
+        self._color          = color if isinstance(color, list) else [color]
+        self._chunkSize      = chunkSize
+
+        super().__init__()
+
+    def _configured(self):
+        super()._configured()
+        self._lineCount = self._channels
+
+        buffer1Size   = int(self.plotWidget.xRange*self._fs*1.2)
+        self._buffer1 = misc.CircularBuffer((self._lineCount, buffer1Size))
+
+        self._labelOffset += (np.arange(self._lineCount) * self._yGap
+            + self._yOffset)
+        self._plotWidget.add(self, self._label, self._labelOffset)
+
+        # prepare plotting chunks
+        self._chunkCount = int(np.ceil(self.plotWidget.xRange
+            / self._chunkSize))
+        self._curves = [[None]*self._chunkCount
+            for i in range(self._lineCount)]
+        for i in range(self._lineCount):
+            for j in range(self._chunkCount):
+                self._curves[i][j] = self.plotWidget.plot([], [],
+                    pen=self._color[i % len(self._color)])
+
+    def write(self, data, source=None):
+        '''
+        Args:
+            data (numpy.array): 1D for single line or 2D for multiple lines
+                with the following format: lines x samples
+        '''
+        data = self._verifyData(data)
+
+        # keep a local copy of data in a circular buffer
+        # for online processing and fast plotting
+        with self._buffer1:
+            self._buffer1.write(data)
+
+        super().write(data, source)
+
+    def update(self, ts=None, tsMin=None, nextWindow=False):
+        if not self._buffer1.updated: return
+
+        with self._buffer1:
+            nsRange      = int(self.plotWidget.xRange*self._fs)
+            chunkSamples = int(self._chunkSize*self._fs)
+
+            nsFrom       = self._buffer1.nsRead
+            nsFromMin    = nsFrom // nsRange * nsRange
+            chunkFrom    = (nsFrom - nsFromMin) // chunkSamples
+
+            nsTo         = self._buffer1.nsWritten
+            nsToMin      = nsTo // nsRange * nsRange
+            chunkTo      = (nsTo - nsToMin) // chunkSamples
+            chunkTo      = min(chunkTo, self._chunkCount-1)
+
+            # when plot advances to next time window
+            # if nextWindow: chunkFrom = chunkTo = 0
+            if chunkTo < chunkFrom: chunkFrom = 0
+
+            try:
+                for chunk in range(chunkFrom, chunkTo+1):
+                    nsChunkFrom  = nsToMin + chunk*chunkSamples
+                    nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
+                    if nsChunkFrom == nsChunkTo: continue
+                    time         = np.arange(nsChunkFrom,
+                                   nsChunkTo) / self._fs
+                    data         = self._buffer1.read(nsChunkFrom, nsChunkTo)
+                    for line in range(self.lineCount):
+                        self._curves[line][chunk].setData(time,
+                            data[line,:]*self._yScale
+                            + self._yOffset + line*self._yGap)
+            except:
+                log.info('nsRange %d, chunkSamples %d, nsFrom %d, '
+                    'nsFromMin %d, chunkFrom %d, nsTo %d, nsToMin %d, '
+                    'chunkTo %d, chunk %d, line %d', nsRange, chunkSamples,
+                    nsFrom, nsFromMin, chunkFrom, nsTo, nsToMin, chunkTo,
+                    chunk, line)
+                raise
 
 
 class MultiLine(pg.QtGui.QGraphicsPathItem):

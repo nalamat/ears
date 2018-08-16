@@ -38,6 +38,7 @@ import hdf5
 import misc
 import pump
 import config
+import pipeline
 import plotting
 import globals          as     gb
 
@@ -181,18 +182,37 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                             yLimits=(-1,7.5), yGrid=[-.5,0,1,2,2.5,4.5,5,6,7])
 
         # analog traces
-        self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
-                            label='Speaker', hdf5Node=speakerNode,
+        # self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Speaker', hdf5Node=speakerNode,
+        #                     yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
+        # self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Mic', hdf5Node=micNode,
+        #                     yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
+        # self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Poke', labelOffset=.5,
+        #                     yScale=.2, yOffset=1, color=config.COLOR_POKE)
+        # self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Spout', labelOffset=.5,
+        #                     yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+
+        self.speakerTrace = plotting.AnalogPlot(self.plot,
+                            label='Speaker',
                             yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
-        self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
-                            label='Mic', hdf5Node=micNode,
+        self.micTrace     = plotting.AnalogPlot(self.plot,
+                            label='Mic',
                             yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
-        self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
+        self.pokeTrace    = plotting.AnalogPlot(self.plot,
                             label='Poke', labelOffset=.5,
                             yScale=.2, yOffset=1, color=config.COLOR_POKE)
-        self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
+        self.spoutTrace   = plotting.AnalogPlot(self.plot,
                             label='Spout', labelOffset=.5,
                             yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+
+        daqs.analogInput | pipeline.DownsampleAverage(ds=4) | \
+            pipeline.Split() | (self.speakerTrace,
+                                self.micTrace,
+                                self.pokeTrace,
+                                self.spoutTrace)
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,
@@ -1034,10 +1054,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     def analogInputDataAcquired(self, task, data):
         speaker, mic, poke, spout = data
         # log.info('Appending analog data: %d samples', data.shape[-1])
-        self.speakerTrace.append(speaker)
-        self.micTrace    .append(mic    )
-        self.pokeTrace   .append(poke   )
-        self.spoutTrace  .append(spout  )
+        # self.speakerTrace.append(speaker)
+        # self.micTrace    .append(mic    )
+        # self.pokeTrace   .append(poke   )
+        # self.spoutTrace  .append(spout  )
         # log.info('Appended analog data')
 
     def analogOutputDataNeeded(self, task, nsWritten, nsNeeded):
