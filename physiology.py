@@ -85,12 +85,12 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             self.physiologyInputDataAcquired)
 
     def initPlot(self):
-        physiologyFS          = daqs.physiologyInput.fs
-        lineCount             = daqs.physiologyInput.lineCount
-        lineLabels            = list(map(str, np.arange(lineCount)+1))
-        behavior              = gb.behaviorWindow
+        physiologyFS           = daqs.physiologyInput.fs
+        lineCount              = daqs.physiologyInput.lineCount
+        lineLabels             = list(map(str, np.arange(lineCount)+1))
+        behavior               = gb.behaviorWindow
 
-        self.timePlot         = plotting.ScrollingPlotWidget(xRange=10,
+        self.timePlot          = plotting.ScrollingPlotWidget(xRange=10,
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
@@ -100,17 +100,23 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         #                         lineCount=lineCount, filter=(300,6e3),
         #                         yScale=.1, yOffset=14, yGap=-1, grandMean=True)
 
-        self.physiologyTrace  = plotting.AnalogPlot(self.timePlot,
+        self.physiologyTrace   = plotting.AnalogPlot(self.timePlot,
                                 label=lineLabels,
                                 yScale=.1, yOffset=14, yGap=-1)
 
-        self.dataThread   = pipeline.Thread()
-        self.grandAverage = pipeline.GrandAverage()
-        self.filter       = pipeline.LFilter(fl=300, fh=6e3)
-        self.downsample   = pipeline.DownsampleAverage(ds=6)
+        self.physiologyStorage = hdf5.AnalogStorage('/trace/physiology')
 
+        self.dataThread        = pipeline.Thread()
+        self.grandAverage      = pipeline.GrandAverage()
+        self.filter            = pipeline.LFilter(fl=300, fh=6e3)
+        self.downsample        = pipeline.DownsampleAverage(ds=6)
+
+        # processing and plotting pipeline
         (daqs.physiologyInput | self.dataThread | self.filter
             | self.grandAverage | self.downsample | self.physiologyTrace)
+
+        # storage pipeline
+        daqs.physiologyInput | self.physiologyStorage
 
 
         # rectangular plots

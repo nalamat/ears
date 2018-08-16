@@ -23,7 +23,7 @@ import threading
 # import multiprocessing
 import tables          as tb
 
-import misc
+import pipeline
 
 
 log   = logging.getLogger(__name__)
@@ -176,6 +176,43 @@ def _checkFile():
 #         log.exception('')
 #
 #     log.info('Stopping HFD5 loop')
+
+
+class AnalogStorage(pipeline.Sampled):
+    def __init__(self, hdf5Node, compLib='zlib', compLevel=1, **kwargs):
+        '''
+        Args:
+            hdf5Node (str): Path of the node to store data in HDF5 file.
+            compLib (str): Compression library, should be one of the following:
+                zlib, lzo, bzip2, blosc, blosc:blosclz, blosc:lz4,
+                blosc:lz4hc, blosc:snappy, blosc:zlib, blosc:zstd
+            compLevel: Level of compression can vary from 0 (no compression)
+                to 9 (maximum compression)
+        '''
+        if not isinstance(hdf5Node, str):
+            raise TypeError('`hdf5Node` should be a string')
+
+        self._hdf5Node    = hdf5Node
+        self._hdf5Filters = tb.Filters(complib=compLib, complevel=compLevel)
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params):
+        super()._configured(params)
+
+        if contains(self._hdf5Node):
+            raise NameError('HDF5 node %s already exists' % self._hdf5Node)
+        createEArray(self._hdf5Node, tb.Float32Atom(),
+            (0, self._channels), '', self._hdf5Filters,
+            expectedrows=self._fs*60*30)    # 30 minutes
+        setNodeAttr(self._hdf5Node, 'fs', self._fs)
+
+    def write(self, data, source=None):
+        data = self._verifyData(data)
+
+        appendArray(self._hdf5Node, data.transpose())
+
+        super().write(data, source)
 
 
 if __name__ == '__main__':

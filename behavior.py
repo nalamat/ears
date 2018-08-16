@@ -172,10 +172,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     def initPlot(self):
 
-        inputFS           = daqs.analogInput.fs
-        physiology        = gb.session.recording.value == 'Physiology'
-        speakerNode       = '/trace/speaker' if physiology else None
-        micNode           = '/trace/mic'     if physiology else None
+        # inputFS           = daqs.analogInput.fs
+        # physiology        = gb.session.recording.value == 'Physiology'
+        # speakerNode       = '/trace/speaker' if physiology else None
+        # micNode           = '/trace/mic'     if physiology else None
 
         # plot widget
         self.plot         = plotting.ScrollingPlotWidget(xRange=10,
@@ -213,6 +213,14 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                                 self.micTrace,
                                 self.pokeTrace,
                                 self.spoutTrace)
+
+        if gb.session.recording.value == 'Physiology':
+            self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
+            self.micStorage     = hdf5.AnalogStorage('/trace/mic')
+
+            daqs.analogInput | pipeline.Split() | (self.speakerStorage,
+                                                   self.micStorage,
+                                                   pipeline.DummySink(2))
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,
