@@ -903,8 +903,8 @@ class AnalogPlot(pipeline.Sampled):
     def yScale(self, value):
         self._yScale = value
 
-    def __init__(self, plotWidget, label=None, labelOffset=0,
-            yScale=1, yOffset=0, yGap=1, color=list('rgbcmyk'), chunkSize=.5):
+    def __init__(self, plotWidget, label=None, labelOffset=0, yScale=1,
+            yOffset=0, yGap=1, color=list('rgbcmyk'), chunkSize=.5, **kwargs):
 
         self._plotWidget     = plotWidget
         self._label          = label
@@ -915,10 +915,11 @@ class AnalogPlot(pipeline.Sampled):
         self._color          = color if isinstance(color, list) else [color]
         self._chunkSize      = chunkSize
 
-        super().__init__()
+        super().__init__(**kwargs)
 
-    def _configured(self):
-        super()._configured()
+    def _configured(self, params):
+        super()._configured(params)
+
         self._lineCount = self._channels
 
         buffer1Size   = int(self.plotWidget.xRange*self._fs*1.2)
