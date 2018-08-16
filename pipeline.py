@@ -144,14 +144,17 @@ class Node(Route):
         # node is a route which both its input and output are the node itself
         super().__init__(self, self)
 
-        self._sources = tuple()
-        self._sinks   = tuple()
-        self._params  = kwargs
+        self._sources    = tuple()
+        self._sinks      = tuple()
+        self._params     = dict()
+        self._sinkParams = dict()
+
+        self._config(kwargs)
 
     def _addSinks(self, sinks):
-        # set sampling frequency of new sinks
+        # config new sinks
         for sink in sinks:
-            sink._setParams(self._params)
+            sink._config(self._sinkParams)
         # keep track of connected sinks
         self._sinks += sinks
 
@@ -159,22 +162,26 @@ class Node(Route):
         # keep track of connected sources
         self._sources += sources
 
-    def _setParams(self, params):
-        # allow child classes to verify new params
-        self._paramsChanging(params)
-        # apply changes to local dict
-        self._params.update(params)
-        # allow child classes to do housekeeping after changes are applied
-        # they can also change params before they are passed to sinks
-        self._paramsChanged(params)
-        # pass params to downstream nodes
+    def _config(self, params, sinkParams=None):
+        if not params or params == self._params:
+            return
+
+        if self._params:
+            raise RuntimeError('Node can be configured only once')
+
+        if sinkParams is None:
+            sinkParams = params
+
+        self._params     = params
+        self._sinkParams = sinkParams
+
+        # pass sinkParams to downstream nodes
         for sink in self._sinks:
-            sink._setParams(params)
+            sink._config(sinkParams)
 
-    def _paramsChanging(self, params):
-        pass
+        self._configured()
 
-    def _paramsChanged(self, params):
+    def _configured(self):
         pass
 
     def write(self, data, source=None):
@@ -194,24 +201,12 @@ class Node(Route):
             sink.wait()
 
 
-class Split(Node):
-    '''Split written data into multiple sink nodes.'''
-
-    def write(self, data, source=None):
-        if not hasattr(data, '__len__'):
-            raise TypeError('`data` should be list-like')
-        if len(data) != len(self._sinks):
-            raise ValueError('Length of `data` should match `sink` count')
-        for sink, segment in zip(self._sinks, data):
-            sink.write(segment, self)
-
-
 class Print(Node):
     '''Print each given chunk of data.'''
 
     def write(self, data, source=None):
         print(data)
-        super().write(data, self)
+        super().write(data, source)
 
 
 class Func(Node):
@@ -227,7 +222,7 @@ class Func(Node):
 
     def write(self, data, source=None):
         data = self._func(data)
-        super().write(data, self)
+        super().write(data, source)
 
 
 class Thread(Node):
@@ -255,8 +250,8 @@ class Thread(Node):
         #         pass
 
         while True:
-            data = self._queue.get()
-            super().write(data, self)
+            (data, source) = self._queue.get()
+            super().write(data, source)
 
     # def start(self):
     #     if self._thread is None:
@@ -280,42 +275,70 @@ class Thread(Node):
     def write(self, data, source=None):
         if not self._thread.isAlive():
             self._thread.start()
-        self._queue.put(data)
+        self._queue.put((data, source))
 
 
 class Sampled(Node):
     ''''''
 
     def __init__(self, **kwargs):
+        self._fs       = None
+        self._channels = None
+
         super().__init__(**kwargs)
 
-        self._params['fs'      ] = self._params.get('fs'      , None)
-        self._params['channels'] = self._params.get('channels', None)
+    # def _config(self, params, sinkParams=None):
+    #     if not params or params == self._params:
+    #         return
+    #
+    #     super()._config(params, sinkParams)
 
-    def _paramsChanging(self, params):
-        for name in ('fs', 'channels'):
-            if name in params:
-                if self._params[name] == params[name]:
-                    # drop from params if value is not changing
-                    params.pop(name)
-                elif self._params[name] is not None:
-                    raise RuntimeError(
-                        'Cannot change `%s` when already set' % name)
+    def _configured(self):
+        super()._configured()
+
+        if 'fs' not in self._params or 'channels' not in self._params:
+            raise ValueError('Sampled node requires `fs` and `channels`')
+
+        self._fs       = self._params['fs']
+        self._channels = self._params['channels']
 
     def _verifyData(self, data):
         if data.ndim == 1: data = data[np.newaxis, :]
         if data.ndim != 2: raise ValueError('`data` should be 1D or 2D')
 
-        if self._params['fs'] is None:
-            raise RuntimeError('Parameter `fs` has not been set')
+        if self._fs is None or self._channels is None:
+            raise RuntimeError('Node is not configured')
 
-        if self._params['channels'] is None:
-            raise RuntimeError('Parameter `channels` has not been set')
-
-        if self._params['channels'] != data.shape[0]:
+        if self._channels != data.shape[0]:
             raise ValueError('`data` channel count does not match `channels`')
 
         return data
+
+
+class Split(Sampled):
+    '''Split multichannel data into multiple sink nodes.'''
+
+    def _config(self, params, sinkParams=None):
+        if not params or params == self._params:
+            return False
+
+        if sinkParams is None:
+            sinkParams = params.copy()
+
+        if 'channels' in sinkParams:
+            # each sink will only receive 1 channel
+            sinkParams['channels'] = 1
+
+        super()._config(params, sinkParams)
+
+    def write(self, data, source=None):
+        data = self._verifyData(data)
+
+        if self._channels != len(self._sinks):
+            raise ValueError('`channels` should match `sink` count')
+
+        for sink, channel in zip(self._sinks, data):
+            sink.write(channel, self)
 
 
 class LFilter(Sampled):
@@ -359,7 +382,6 @@ class LFilter(Sampled):
             fh (float): High cutoff frequency.
             n (int): Filter order.
         '''
-        super().__init__(**kwargs)
 
         self._fl        = fl
         self._fh        = fh
@@ -368,75 +390,77 @@ class LFilter(Sampled):
         self._ba        = None
         self._zi        = None
 
-        self._refresh()
+        super().__init__(**kwargs)
 
-    def _paramsChanged(self, params):
-        if 'fs' in params or 'channels' in params:
-            self._refresh()
+    def _configured(self):
+        super()._configured()
+        self._refresh()
 
     def _refresh(self):
         # called when any of the following changes: fs, channels, fl, fh, n
-        if self._params['fs'] is None or self._params['channels'] is None:
+        if self._fs is None or self._channels is None:
             ba = None
-        elif self._fl is not None and self._fh is not None:
+        # elif self._fl is not None and self._fh is not None:
+        elif self._fl  and self._fh:
             ba = sp.signal.butter(self._n,
-                (self._fl/self._fs, self._fh/self._fs), 'bandpass')
-        elif self._fl is not None:
-            ba = sp.signal.butter(self._n, self._fl/self._fs, 'highpass')
-        elif self._fh is not None:
-            ba = sp.signal.butter(self._n, self._fh/self._fs, 'lowpass')
+                (self._fl/self._fs*2, self._fh/self._fs*2), 'bandpass')
+        # elif self._fl is not None:
+        elif self._fl:
+            ba = sp.signal.butter(self._n, self._fl/self._fs*2, 'highpass')
+        # elif self._fh is not None:
+        elif self._fh:
+            ba = sp.signal.butter(self._n, self._fh/self._fs*2, 'lowpass')
         else:
             ba = None
 
-        # initialize filter in steady state
-        if ba is not None and self._ba != ba:
-            self._zi = sp.signal.lfilter_zi(*self._ba)
-            self._zi = np.tile(self._zi, self._params['channels']
-                ).reshape((self._params['channels'], -1))
-            self._zi = self._zi * data[:,0]
+        # reset initial filter state
+        if ba is not None and np.any(np.array(self._ba) != np.array(ba)):
+            self._zi = None
 
         self._ba = ba
 
     def write(self, data, source=None):
-        data = self_verifyData(data)
+        data = self._verifyData(data)
 
         if self._ba is not None:
+            # initialize filter in steady state
+            if self._zi is None:
+                self._zi = sp.signal.lfilter_zi(*self._ba)
+                self._zi = np.tile(self._zi, self._channels
+                    ).reshape((self._channels, -1))
+                self._zi = self._zi * data[:,0].reshape((self._channels, -1))
+
             # apply the IIR filter
             data, self._zi = sp.signal.lfilter(*self._ba, data, zi=self._zi)
 
-        super().write(data, self)
+        super().write(data, source)
 
 
 class DownsampleAverage(Sampled):
     def __init__(self, ds, **kwargs):
-        super().__init__(**kwargs)
-
         if ds < 1:          raise ValueError('`ds` should be >= 1')
         if round(ds) != ds: raise ValueError('`ds` should be an integer')
 
         self._ds     = ds
         self._buffer = None
-        self._fsOut  = None
 
-        self._refresh()
+        super().__init__(**kwargs)
 
-    def _paramsChanged(self, params):
-        if 'fs' in params or 'channels' in params:
-            self._refresh()
+    def _config(self, params, sinkParams=None):
+        if not params or params == self._params:
+            return False
 
-        # pass fsOut to sinks instead
-        if 'fs' in params:
-            params['fs'] = self._fsOut
+        if sinkParams is None:
+            sinkParams = params.copy()
 
-    def _refresh(self):
-        fs       = self._params['fs']
-        channels = self._params['channels']
+        if 'fs' in sinkParams:
+            sinkParams['fs'] = sinkParams['fs'] / self._ds
 
-        if fs is not None:
-            self._fsOut = fs / self._ds
+        super()._config(params, sinkParams)
 
-        if fs is not None and channels is not None:
-            self._buffer = misc.CircularBuffer((channels, fs*10))
+    def _configured(self):
+        super()._configured()
+        self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
 
     def write(self, data, source=None):
         data = self._verifyData(data)
@@ -453,7 +477,7 @@ class DownsampleAverage(Sampled):
             data = data.reshape(data.shape[0], -1, self._ds)
             data = data.mean(axis=2)
 
-        super().write(data, self)
+        super().write(data, source)
 
 
 class GrandAverage(Sampled):
@@ -463,13 +487,13 @@ class GrandAverage(Sampled):
 
     @mask.setter
     def mask(self, mask):
-        if self._params['channels'] is None:
+        if self._channels is None:
             raise RuntimeError('Cannot set `mask` before number of `channels`')
 
         # verify type and size
         if not isinstance(mask, tuple):
             raise TypeError('`mask` should be a tuple')
-        if len(mask) != self._params['channels']:
+        if len(mask) != self._channels:
             raise ValueError('Size of `mask` should match number of `channels`')
         for m in mask:
             if not isinstance(m, bool):
@@ -478,32 +502,26 @@ class GrandAverage(Sampled):
         self._mask = mask
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
         self._mask = None
 
-        self._refresh()
+        super().__init__(**kwargs)
 
-    def _paramsChanged(self, params):
-        if 'channels' in params:
-            self._refresh()
-
-    def _refresh(self):
-        if self._params['channels'] is not None:
-            self._mask = (True,) * self._params['channels']
+    def _configured(self):
+        super()._configured()
+        self._mask = (True,) * self._channels
 
     def write(self, data, source=None):
         data = self._verifyData(data)
 
         data2 = data.copy().astype(np.float64)
-        for channel in range(self._params['channels']):
+        for channel in range(self._channels):
             mask = np.array(self._mask)
             if not mask[channel]: continue
             mask[channel] = False
             if not mask.any(): continue
             data2[channel,:] -= data[mask,:].mean(axis=0)
 
-        super().write(data2, self)
+        super().write(data2, source)
 
 
 class CircularBuffer(Sampled):
@@ -528,8 +546,6 @@ class CircularBuffer(Sampled):
         return self._ns
 
     def __init__(self, size, **kwargs):
-        super().__init__(**kwargs)
-
         if size < 1:            raise ValueError('`size` should be >= 1')
         if round(size) != size: raise TypeError ('`size` should be an integer')
 
@@ -537,15 +553,11 @@ class CircularBuffer(Sampled):
         self._data = None
         self._ns   = 0
 
-        self._refresh()
+        super().__init__(**kwargs)
 
-    def _paramsChanged(self, params):
-        if 'channels' in params:
-            self._refresh()
-
-    def _refresh(self):
-        if self._params['channels'] is not None:
-            self._data = np.zeros((self._params['channels'], self._size))
+    def _configured(self):
+        super()._configured()
+        self._data = np.zeros((self._channels, self._size))
 
     def write(self, data, source=None):
         data = self._verifyData(data)
@@ -556,7 +568,7 @@ class CircularBuffer(Sampled):
         self._data[:,inds] = data
         self._ns += n
 
-        super().write(data, self)
+        super().write(data, source)
 
     def read(self, n):
         '''Read the last `n` samples written in the buffer.'''
@@ -572,8 +584,9 @@ class CircularBuffer(Sampled):
 
 
 if __name__ == '__main__':
-    head   = Sampled(fs=10, channels=1)
+    head   = Sampled(fs=10, channels=2)
     thread = Thread()
+    split  = Split()
     filt   = LFilter(fh=9)
     ds     = DownsampleAverage(ds=2)
     avg    = GrandAverage()
@@ -583,15 +596,18 @@ if __name__ == '__main__':
     pr     = Print()
     buffer = CircularBuffer(10)
 
-    # head | Thread() | (func,  func1 | ds | func2) | pr
-    head | thread | avg | pr | buffer
+    head | thread | split  | (mult2,  plus1 | plus2 | filt) | pr
+    # head | thread | avg | pr | buffer
+    # head | split | (mult2, plus1) | pr
 
     # avg.mask = (True, True, False)
 
-    head.write(np.array([3, 1, 4, 6, 7, .1, 4, 12, 22, 43, 18, 32, 12, 23]))
+    head.write(np.array([[3, 1, 4, 6, 7, .1, 4], [12, 22, 43, 18, 32, 12, 23]]))
     head.wait()
 
-    print(buffer.read(10))
+    # print(split._params)
+    # print(mult2._params)
+    # print(plus1._params)
 
     # filt.fh = None
     # head.write(np.array([10,10,10,10,10,10,9,8,7,6,5,4]))
