@@ -81,7 +81,7 @@ class PumpCommError(PumpError):
             ''      : 'Command is not recognized',
             'NA'    : 'Command is not currently applicable',
             'OOR'   : 'Command data is out of range',
-            'COM'   : 'Invalid communications packet recieved',
+            'COM'   : 'Invalid communications packet received',
             'IGN'   : 'Command ignored due to new phase start',
             # Custom codes
             'NR'    : 'No response from pump',
