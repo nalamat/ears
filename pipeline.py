@@ -53,8 +53,8 @@ class Route():
             routes = tuple(routes)
 
         # check if empty
-        if not routes:
-            raise ValueError('`routes` cannot be empty')
+        # if not routes:
+        #     raise ValueError('`routes` cannot be empty')
 
         # check the type
         for route in routes:
@@ -219,6 +219,16 @@ class Node(Route):
 
         for sink in self._sinks:
             sink.wait()
+
+
+class DummySink(Node):
+    '''Dummy sink can have any number of inputs and but no outputs.'''
+
+    def __init__(self, inputs=1):
+        super().__init__()
+
+        self._inputs  = (self,)*inputs
+        self._outputs = tuple()
 
 
 class Print(Node):
@@ -612,7 +622,8 @@ if __name__ == '__main__':
     pr     = Print()
     buffer = CircularBuffer(10)
 
-    head | thread | split  | (mult2,  plus1 | plus2 | filt) | pr
+    head | thread | split | (mult2,  plus1 | plus2 | filt) | pr
+    # head | split | DummySink(2)
     # head | thread | avg | pr | buffer
     # head | split | (mult2, plus1) | pr
 
