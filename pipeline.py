@@ -19,6 +19,7 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 import time
 import queue
 import logging
+import fractions
 import threading
 import scipy.signal
 import numpy        as np
@@ -472,12 +473,13 @@ class LFilter(Sampled):
         super().write(data, source)
 
 
-class DownsampleAverage(Sampled):
-    def __init__(self, ds, **kwargs):
+class Downsample(Sampled):
+    def __init__(self, ds, bin=None, **kwargs):
         if ds < 1:          raise ValueError('`ds` should be >= 1')
         if round(ds) != ds: raise ValueError('`ds` should be an integer')
 
         self._ds     = ds
+        self._bin    = ds if bin is None else bin
         self._buffer = None
 
         super().__init__(**kwargs)
@@ -492,22 +494,143 @@ class DownsampleAverage(Sampled):
 
         self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
 
+    def _downsample(self, data):
+        raise NotImplementedError()
+
     def write(self, data, source=None):
         data = self._verifyData(data)
 
+        # if ds==1, transparently pass data down the pipeline
         if self._ds != 1:
             # TODO: find a better solution than writing to a buffer
-            # all nodes should be able to process very large signals
+            # all nodes should be able to process arbitrarily large signals
             self._buffer.write(data)
             ns = self._buffer.nsWritten
-            ns = ns // self._ds * self._ds
+            ns = ns // self._bin * self._bin
             if ns <= self._buffer.nsRead: return
             data = self._buffer.read(to=ns)
 
-            data = data.reshape(data.shape[0], -1, self._ds)
-            data = data.mean(axis=2)
+            data = self._downsample(data)
 
         super().write(data, source)
+
+
+class DownsampleAverage(Downsample):
+    def _downsample(self, data):
+        data = data.reshape(data.shape[0], -1, self._ds)
+        data = data.mean(axis=2)
+        return data
+
+
+class DownsampleMinMax(Downsample):
+    '''Divide data into bins and choose only the min and max of each bin.'''
+
+    def __init__(self, ds, **kwargs):
+        super().__init__(ds, bin=ds*2, **kwargs)
+
+    def _downsample(self, data):
+        data = data.reshape(self._channels, -1, self._bin)
+        data = np.stack((data.min(axis=-1), data.max(axis=-1)), axis=2)
+        data = data.reshape(self._channels, -1)
+        return data
+
+
+class DownsampleLTTB(Sampled):
+    ''''Downsample using the Largest Triangle Three Buckets (LTTB) algorithm.
+
+    See Steinarsson (2013):
+    https://skemman.is/bitstream/1946/15343/3/SS_MSthesis.pdf
+    '''
+
+    def __init__(self, fsOut, **kwargs):
+        self._fsOut  = fsOut
+        self._buffer = None
+        self._last   = None
+
+        super().__init__(**kwargs)
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        sinkParams['fs'] = self._fsOut
+
+    def _configured(self, params):
+        super()._configured(params)
+
+        if self._fs < self._fsOut:
+            raise ValueError('`fsOut` should be >= `fs`')
+
+        if self._fs != self._fsOut:
+            # use the Fraction class to determine the smallest number of input
+            # and output samples to yield the required downsampling ratio
+            frac = (fractions.Fraction(self._fs)
+                / fractions.Fraction(self._fsOut))
+            self._nIn  = frac.numerator
+            self._nOut = frac.denominator
+
+            if self._nIn > self._fs*5:
+                raise ValueError('Numerator of `fs`/`fsOut` is too large')
+
+            self._buffer = misc.CircularBuffer(
+                (self._channels, int(self._fs*10)))
+
+    def write(self, data, source=None):
+        data = self._verifyData(data)
+
+        if self._fs != self._fsOut:
+            # buffer the input data
+            self._buffer.write(data)
+            ns = self._buffer.nsWritten
+            ns = ns // self._nIn * self._nIn
+            if ns <= self._buffer.nsRead: return
+            data = self._buffer.read(to=ns)
+
+            nIn  = data.shape[1]
+            nOut = int(nIn / self._nIn * self._nOut)
+
+            if self._last is None:
+                last  = data[:,0]
+                data  = data[:,1:]
+            else:
+                last  = self._last
+                nOut += 1
+
+            # init output data array
+            dataOut = np.zeros((self._channels, nOut))
+            dataOut[:, 0] = last
+            dataOut[:,-1] = data[:,-1]
+
+            # bin data points
+            nBins    = nOut - 2
+            dataBins = np.array_split(data[:,:-1], nBins, axis=1)
+
+            # iterate over bins
+            for i in range(nBins):
+                if i < nBins-1:
+                    nextBin = dataBins[i+1]
+                else:
+                    nextBin = data[:,-1:]
+
+                a = dataOut[:,i:i+1]
+                b = dataBins[i]
+                c = np.mean(nextBin, axis=1)[:,np.newaxis]
+
+                # find the point in current bin that makes the largest triangle
+                areas  = abs(a + c - 2*b)/2
+                argmax = np.argmax(areas, axis=1)
+
+                dataOut[:,i+1] = b[np.arange(b.shape[0]), argmax]
+
+            if self._last is not None:
+                dataOut = dataOut[:,1:]
+
+            self._last = dataOut[:,-1]
+
+        else:
+            # transparently pass the data down the pipeline
+            dataOut = data
+
+        super().write(dataOut, source)
 
 
 class GrandAverage(Sampled):

@@ -74,7 +74,8 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # init update timer (for time varying GUI elements)
         # self.updateTimer       = QtCore.QTimer()
         # self.updateTimer.timeout.connect(self.updateGUI)
-        # self.updateTimer.setInterval(10)    # every 50 ms
+        # self.updateTimer.setInterval(1000)    # every 50 ms
+        # self.updateTimer.start()
 
         # self.forceTrialType = 'Go remind'
         # self.evaluateParadigm()
@@ -90,6 +91,12 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         lineLabels             = list(map(str, np.arange(lineCount)+1))
         behavior               = gb.behaviorWindow
 
+
+        self.physiologyStorage = hdf5.AnalogStorage('/trace/physiology')
+
+        # storage pipeline
+        daqs.physiologyInput | self.physiologyStorage
+
         self.timePlot          = plotting.ScrollingPlotWidget(xRange=10,
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
@@ -104,19 +111,35 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
                                 label=lineLabels,
                                 yScale=.1, yOffset=14, yGap=-1)
 
-        self.physiologyStorage = hdf5.AnalogStorage('/trace/physiology')
+        # self.physiologyTrace0  = plotting.AnalogPlot(self.timePlot,
+        #                         label=lineLabels[0],
+        #                         yScale=.1, yOffset=14, yGap=-1)
+        #
+        # self.physiologyTrace1  = plotting.AnalogPlot(self.timePlot,
+        #                         label=lineLabels[1],
+        #                         yScale=.1, yOffset=13, yGap=-1)
+        #
+        # self.physiologyTrace2  = plotting.AnalogPlot(self.timePlot,
+        #                         label=lineLabels[2],
+        #                         yScale=.1, yOffset=12, yGap=-1)
+        #
+        # self.physiologyTrace3  = plotting.AnalogPlot(self.timePlot,
+        #                         label=lineLabels[3],
+        #                         yScale=.1, yOffset=11, yGap=-1)
 
-        self.dataThread        = pipeline.Thread()
         self.grandAverage      = pipeline.GrandAverage()
-        self.filter            = pipeline.LFilter(fl=300, fh=6e3)
-        self.downsample        = pipeline.DownsampleAverage(ds=6)
+        self.filter            = pipeline.LFilter(fl=300, fh=6e3, n=6)
 
         # processing and plotting pipeline
-        (daqs.physiologyInput | self.dataThread | self.filter
-            | self.grandAverage | self.downsample | self.physiologyTrace)
-
-        # storage pipeline
-        daqs.physiologyInput | self.physiologyStorage
+        (daqs.physiologyInput | pipeline.Thread() | self.filter
+            | self.grandAverage | pipeline.DownsampleMinMax(ds=32)
+            | self.physiologyTrace)
+            # | pipeline.Split() | (pipeline.Node(), pipeline.DummySink(14))
+            # | (self.physiologyTrace0,
+            #    pipeline.DownsampleMinMax(ds=50) | self.physiologyTrace1,
+            #    pipeline.DownsampleLTTB(fsOut=31250/50) | self.physiologyTrace2,
+            #    pipeline.DownsampleAverage(ds=50) | self.physiologyTrace3,
+            #    ))
 
 
         # rectangular plots
@@ -247,6 +270,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout()
 
         yScale = int(20*np.log10(self.physiologyTrace.yScale))
+        # yScale = int(20*np.log10(self.physiologyTrace0.yScale))
         self.lblYScale = QtWidgets.QLabel('Scale: %d dB' % yScale)
         layout.addWidget(self.lblYScale)
         self.sldYScale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
@@ -374,7 +398,12 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
     def applyClicked(self, *args):
         # get values from widgets
         # self.physiologyTrace.refreshBlock   = True
-        self.physiologyTrace.yScale         = 10**(self.sldYScale.value()/20)
+        yScale = 10**(self.sldYScale.value()/20)
+        self.physiologyTrace.yScale = yScale
+        # self.physiologyTrace0.yScale = yScale
+        # self.physiologyTrace1.yScale = yScale
+        # self.physiologyTrace2.yScale = yScale
+        # self.physiologyTrace3.yScale = yScale
         # self.physiologyTrace.filter         = (self.sldFilterFL.value(),
         #    self.sldFilterFH.value())
         self.filter.fl = self.sldFilterFL.value()
