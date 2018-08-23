@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 class Route():
     '''Store input and output nodes of a pipeline route.
 
-    Routes can be connected to other Route instance(s) using the | operator.
+    Routes can be connected to other Route(s) using the | or >> operators.
 
     A route can be thought of as a black box that doesn't contain any
     functional data processing or flow control.
@@ -112,6 +112,12 @@ class Route():
         return self.connect(self, sinks)
 
     def __ror__(self, sources):
+        return self.connect(sources, self)
+
+    def __rshift__(self, sinks):
+        return self.connect(self, sinks)
+
+    def __rrshift__(self, sources):
         return self.connect(sources, self)
 
     def _addSinks(self, sinks):
