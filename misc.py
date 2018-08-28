@@ -23,7 +23,8 @@ import pathlib
 import functools
 import threading
 import subprocess
-import numpy      as     np
+import collections
+import numpy       as     np
 
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ log = logging.getLogger(__name__)
 def listLike(obj, strIncluded=True):
     return (hasattr(obj, '__len__') and
         (strIncluded or not isinstance(obj, str)) )
+
+def iterable(obj):
+    return isinstance(obj, collections.Iterable)
 
 def inDirectory(file, directory):
     file      = os.path.normcase(os.path.realpath(file     ))
