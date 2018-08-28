@@ -725,9 +725,10 @@ class CircularBuffer(Sampled):
 
         super().write(data, source)
 
-    def read(self, n):
+    def read(self, n=None):
         '''Read the last `n` samples written in the buffer.'''
 
+        if n is None:      n = self._size
         if n < 0:          raise ValueError('`n` should be >= 0')
         if self._size < n: raise ValueError('`n` should be <= `size`')
         if self._ns < n:   raise ValueError('`n` should be <= `ns`')
