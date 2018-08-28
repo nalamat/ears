@@ -95,7 +95,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.physiologyStorage = hdf5.AnalogStorage('/trace/physiology')
 
         # storage pipeline
-        daqs.physiologyInput | self.physiologyStorage
+        daqs.physiologyInput >> self.physiologyStorage
 
         self.timePlot          = plotting.ScrollingPlotWidget(xRange=10,
                                 yLimits=(-4,15), yLabel='Electrodes',
@@ -131,14 +131,14 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         self.filter            = pipeline.LFilter(fl=300, fh=6e3, n=6)
 
         # processing and plotting pipeline
-        (daqs.physiologyInput | pipeline.Thread() | self.filter
-            | self.grandAverage | pipeline.DownsampleMinMax(ds=32)
-            | self.physiologyTrace)
-            # | pipeline.Split() | (pipeline.Node(), pipeline.DummySink(14))
-            # | (self.physiologyTrace0,
-            #    pipeline.DownsampleMinMax(ds=50) | self.physiologyTrace1,
-            #    pipeline.DownsampleLTTB(fsOut=31250/50) | self.physiologyTrace2,
-            #    pipeline.DownsampleAverage(ds=50) | self.physiologyTrace3,
+        (daqs.physiologyInput >> pipeline.Thread() >> self.filter
+            >> self.grandAverage >> pipeline.DownsampleMinMax(ds=32)
+            >> self.physiologyTrace)
+            # >> pipeline.Split() >> (pipeline.Node(), pipeline.DummySink(14))
+            # >> (self.physiologyTrace0,
+            #    pipeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
+            #    pipeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
+            #    pipeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
             #    ))
 
 

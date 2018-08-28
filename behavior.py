@@ -208,19 +208,19 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                             label='Spout', labelOffset=.5,
                             yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
 
-        daqs.analogInput | pipeline.DownsampleAverage(ds=4) | \
-            pipeline.Split() | (self.speakerTrace,
-                                self.micTrace,
-                                self.pokeTrace,
-                                self.spoutTrace)
+        (daqs.analogInput >> pipeline.DownsampleAverage(ds=4) >>
+            pipeline.Split() >> (self.speakerTrace,
+                                 self.micTrace,
+                                 self.pokeTrace,
+                                 self.spoutTrace))
 
         if gb.session.recording.value == 'Physiology':
             self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
             self.micStorage     = hdf5.AnalogStorage('/trace/mic')
 
-            daqs.analogInput | pipeline.Split() | (self.speakerStorage,
-                                                   self.micStorage,
-                                                   pipeline.DummySink(2))
+            daqs.analogInput >> pipeline.Split() >> (self.speakerStorage,
+                                                     self.micStorage,
+                                                     pipeline.DummySink(2))
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,
