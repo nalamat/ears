@@ -1502,7 +1502,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         minDelay = (gb.trial.targetDuration.value +
             gb.trial.intertrialDuration.value)
-        maxDelay = 10
+        maxDelay = 5
         duration = np.random.rand()*(maxDelay-minDelay) + minDelay
         self.startEventTimer(duration, 'Random trigger')
 
