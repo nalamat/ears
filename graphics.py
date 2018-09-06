@@ -9,10 +9,13 @@ Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 
 import math
 import time
+import functools
 import threading
 import numpy      as     np
+import scipy      as     sp
 import vispy      as     vp
 import datetime   as     dt
+from   scipy      import signal
 from   vispy      import app, gloo, visuals
 from   PyQt5      import QtCore, QtGui, QtWidgets
 from   OpenGL.GL  import *
@@ -38,26 +41,127 @@ _glslRand = vp.visuals.shaders.Function('''
     ''')
 
 
-class Canvas(vp.app.Canvas):
+_defaultColors = np.array([
+    [0 , 0,  .3],    # 1
+    [0 , 0 , .6],    # 2
+    [0 , 0 , 1 ],    # 3
+    [0 , .3, 1 ],    # 4
+    [0 , .6, 1 ],    # 5
+    [0 , .6, .6],    # 6
+    [0 , .3, 0 ],    # 7
+    [0 , .6, 0 ],    # 8
+    [0 , 1 , 0 ],    # 9
+    [.5, .6, 0 ],    # 10
+    [1 , .6, 0 ],    # 11
+    [.3, 0 , 0 ],    # 12
+    [.6, 0 , 0 ],    # 13
+    [1 , 0 , 0 ],    # 14
+    [1 , 0 , .3],    # 15
+    [1 , 0 , .6],    # 16
+    [.6, 0 , .6],    # 17
+    [.6, 0 , 1 ],    # 18
+    ])
+
+
+class Container:
+    @property
+    def canvas(self):
+        if self._parent is None:
+            raise RuntimeError('No `parent`')
+        else:
+            return self._parent.canvas
+
     @property
     def bgColor(self):
-        return self._bgColor
+        if self._bgColor is not None:
+            return self._bgColor
+        elif self._parent is None:
+            raise RuntimeError('No `parent`')
+        else:
+            return self._parent.bgColor
 
     @property
     def fgColor(self):
-        return self._fgColor
+        if self._fgColor is not None:
+            return self._fgColor
+        elif self._parent is None:
+            raise RuntimeError('No `parent`')
+        else:
+            return self._parent.fgColor
+
+    def __init__(self, parent=None, untPos=(0,0), untSize=(1,1),
+            pxlMargins=(0,0,0,0), bgColor=None, fgColor=None, **kwargs):
+        '''
+        Args:
+            untPos (2 floats): Position of container in unit parent space:
+                (x, y).
+            untSize (2 floats): Size of container in unit parent space: (w, h).
+            pxlMargins (4 floats): Margins between the view and the figure in
+                pixels: (l, t, r, b).
+            bgColor (3 floats): Backgoround color for the container. If None,
+                defaults to parent.bgColor.
+            fgColor (3 floats): Foreground color for border and texts. If None,
+                defaults to parent.fgColor.
+        '''
+
+        # allow multiple inheritance and mixing with other classes
+        super().__init__(**kwargs)
+
+        self._parent     = parent
+        self._untPos     = np.array(untPos)
+        self._untSize    = np.array(untSize)
+        self._pxlMargins = np.array(pxlMargins)
+        self._pxlPos     = np.array([0, 0])
+        self._pxlSize    = np.array([1, 1])
+        self._bgColor    = bgColor
+        self._fgColor    = fgColor
+        self._items      = []
+
+        if parent is not None:
+            parent.addItem(self)
+
+    def _callItems(self, func, *args, **kwargs):
+        for item in self._items:
+            if hasattr(item, func):
+                getattr(item, func)(*args, **kwargs)
+
+    def addItem(self, item):
+        # if not isinstance(item, Figure):
+        #     raise TypeError('`item` should be a Figure')
+
+        self._items += [item]
+
+    def on_resize(self, *args, **kwargs):
+        parent = self._parent
+
+        self._pxlPos = (parent._pxlPos + self._untPos * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+            + parent._pxlMargins[0:2])
+        self._pxlSize = self._untSize * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+
+        self._callItems('on_resize', *args, **kwargs)
+
+    _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
+        'on_mouse_release', 'on_key_release', 'draw']
+    for func in _funcs:
+        exec('def %(func)s(self, *args, **kwargs):\n'
+            '    self._callItems("%(func)s", *args, **kwargs)' % {'func':func})
+
+
+class Canvas(Container, vp.app.Canvas):
+    @property
+    def canvas(self):
+        return self
 
     @property
     def viewport(self):
         return (0, 0, *self.physical_size)
 
-    def __init__(self, bgColor=(1,1,1), fgColor=(.2,.2,.2)):
+    def __init__(self, bgColor=(1,1,1), fgColor=(.2,.2,.2), **kwargs):
 
-        super().__init__(vsync=True, config=dict(samples=4))
-
-        self._bgColor   = bgColor
-        self._fgColor   = fgColor
-        self._figures   = []
+        super().__init__(bgColor=bgColor, fgColor=fgColor,
+            vsync=True, config=dict(samples=1), **kwargs)
 
         vp.gloo.set_state(clear_color=bgColor, blend=True, depth_test=False)
 
@@ -83,33 +187,18 @@ class Canvas(vp.app.Canvas):
     def on_resize(self, event):
         self.context.set_viewport(*self.viewport)
         self._visuals.transforms.configure(canvas=self, viewport=self.viewport)
-
-        for figure in self._figures:
-            figure.canvasResized()
-
-    def on_mouse_wheel(self, event):
-        for figure in self._figures:
-            figure.canvasMouseWheel(event)
-
-    def on_mouse_press(self, event):
-        for figure in self._figures:
-            figure.canvasMousePress(event)
+        self._pxlPos  = np.array([0,0])
+        self._pxlSize = np.array(self.size)
+        self._callItems('on_resize', event)
 
     def on_mouse_move(self, event):
         self._mouseText.text = str(event.pos)
-        for figure in self._figures:
-            figure.canvasMouseMove(event)
-
-    def on_mouse_release(self, event):
-        for figure in self._figures:
-            figure.canvasMouseRelease(event)
+        super().on_mouse_move(event)
 
     def on_key_release(self, event):
-        for figure in self._figures:
-            figure.canvasKeyRelease(event)
-
-        if event.key == 'space' and hasattr(self, 'spacePressed'):
-            self.spacePressed()
+        if hasattr(self, 'keyReleased'):
+            self.keyReleased(event)
+        super().on_key_release(event)
 
         # elif 'Control' in event.modifiers and event.key == 'left':
         #     if self.pan_view(self._viewSize/10*[1,0]):
@@ -141,31 +230,20 @@ class Canvas(vp.app.Canvas):
         self._updateLast = dt.datetime.now()
 
         vp.gloo.clear()
+        # glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
         # glEnable(GL_LINE_STIPPLE)
         # glLineStipple(50, 0b1010101010101010)
         # self._line.draw()
         # glDisable(GL_LINE_STIPPLE)
         # glLineWidth(1)
-        for figure in self._figures:
-            figure.draw()
+        self.draw()
         self._visuals.draw()
+        # self._border._program.draw(self._border._vshare.draw_mode,
+        #                    self._border._vshare.index_buffer)
+        # drawTest()
 
 
-class Figure:
-    @property
-    def bgColor(self):
-        if self._bgColor is None:
-            return self._canvas.bgColor
-        else:
-            return self._bgColor
-
-    @property
-    def fgColor(self):
-        if self._fgColor is None:
-            return self._canvas.fgColor
-        else:
-            return self._fgColor
-
+class Figure(Container):
     @property
     def zoom(self):
         return self._zoom
@@ -176,9 +254,8 @@ class Figure:
         zoom = zoom.clip(1, 1000)
         self._zoom = zoom
         self._transformView['zoom'] = zoom
-        for plot in self._plots:
-            plot.figureZoomed()
-        self._canvas.update()
+        self._callItems('zoomed')
+        self.canvas.update()
 
     @property
     def pan(self):
@@ -192,57 +269,45 @@ class Figure:
         pan = pan.clip(-panLimits, panLimits)
         self._pan = pan
         self._transformView['pan'] = pan
-        for plot in self._plots:
-            plot.figurePanned()
-        self._canvas.update()
+        self._callItems('panned')
+        self.canvas.update()
 
-    def __init__(self, canvas=None, untPos=(0,0), untSize=(1,1),
-            pxlAxesSize=(60,15,15,15), bgColor=None, fgColor=None,
-            borderWidth=1):
+    def __init__(self, borderWidth=1, **kwargs):
         '''
         Args:
-            untPos: Position of figure in unit canvas space: (x, y).
-            untSize: Size of figure in unit canvas space: (w, h).
-            fgColor: Foreground color for border and texts. If None, defaults
-                to canvas.fgColor.
-            pxlAxesSize: Margins between the view and the figure in pixels:
-                (l, t, r, b).
+            borderWidth (float): Width of the border drawn around figure's view
+                box in pixels. Defaults to 1.
         '''
 
         # allow childs to mix with other classes
-        super().__init__()
+        super().__init__(**kwargs)
 
-        if not isinstance(canvas, Canvas):
-            raise TypeError('`canvas` should be instance of Canvas')
+        if not isinstance(self._parent, Container):
+            raise TypeError('`parent` should be a Container')
 
-        self._canvas      = canvas
-        self._untPos      = np.array(untPos)
-        self._untSize     = np.array(untSize)
-        self._pxlAxesSize = np.array(pxlAxesSize)
-        self._bgColor     = bgColor
-        self._fgColor     = fgColor
+        self._pxlViewCenter = np.array([0, 0])
+        self._pxlViewSize   = np.array([1, 1])
+        self._zoom          = np.array([1, 1])
+        self._pan           = np.array([0, 0])
 
-        self._plots       = []
-        self._zoom        = np.array([1, 1])
-        self._pan         = np.array([0, 0])
-
+        # setup glsl transformations for child plot items
         self._transformView = vp.visuals.shaders.Function('''
             vec2 transform_view(vec2 pos) {
                 return $transform(pos, $zoom, $pan);
             }''')
         self._transformView['transform'] = _glslTransform
-        self._transformView['zoom'] = self._zoom
-        self._transformView['pan' ] = self._pan
+        self._transformView['zoom'     ] = self._zoom
+        self._transformView['pan'      ] = self._pan
 
         self._transformFigure = vp.visuals.shaders.Function('''
             vec2 transform_figure(vec2 pos) {
                 return $transform(pos,
                     $view_size / $figure_size,
-                    ($axes_size.xy - $axes_size.wz) / $figure_size
+                    ($margins.xy - $margins.wz) / $figure_size
                     * vec2(1,-1));
             }''')
         self._transformFigure['transform'] = _glslTransform
-        self._transformFigure['axes_size'] = self._pxlAxesSize
+        self._transformFigure['margins'  ] = self._pxlMargins
 
         self._transformCanvas = vp.visuals.shaders.Function('''
             vec2 transform_canvas(vec2 pos) {
@@ -253,37 +318,41 @@ class Figure:
             }''')
         self._transformCanvas['transform'] = _glslTransform
 
+        # a border around the figure
         self._border = vp.visuals._BorderVisual(pos=(0,0), halfdim=(0,0),
             border_width=borderWidth, border_color=self.fgColor)
         # self._line = vp.visuals.LineVisual(np.array([[0, 0], [500,500]]))
 
+        # bundle all visuals for easier management
         self._visuals = vp.visuals.CompoundVisual(
             [
             self._border,
             # self._line,
             ])
 
-        self.canvasResized()
-
-        canvas._figures += [self]
-
     def _pxl2nrmView(self, pxlDelta):
         # translate a delta (dx, dy) from pixels to normalized in view space
         # mainly used for panning
         return pxlDelta * 2 / self._pxlViewSize * [1, -1]
 
-    def canvasResized(self):
-        pxlCanvasSize = np.array(self._canvas.size)
-        self._pxlPos  = self._untPos * pxlCanvasSize
-        self._pxlSize = self._untSize * pxlCanvasSize
-        self._pxlViewCenter = self._pxlPos + (self._pxlSize
-            + self._pxlAxesSize[0:2] - self._pxlAxesSize[2:4])/2
-        self._pxlViewSize   = (self._pxlSize - self._pxlAxesSize[0:2] -
-            self._pxlAxesSize[2:4])
+    def on_resize(self, event):
+        parent = self._parent
 
-        self._visuals.transforms.configure(canvas=self._canvas,
-            viewport=self._canvas.viewport)
-        # self._line.transforms.configure(canvas=self, viewport=viewport)
+        self._pxlPos = (parent._pxlPos + self._untPos * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+            + parent._pxlMargins[0:2])
+        self._pxlSize = self._untSize * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+
+        self._pxlViewCenter = self._pxlPos + (self._pxlSize
+            + self._pxlMargins[0:2] - self._pxlMargins[2:4])/2
+        self._pxlViewSize   = (self._pxlSize - self._pxlMargins[0:2] -
+            self._pxlMargins[2:4])
+
+        self._visuals.transforms.configure(canvas=self.canvas,
+            viewport=self.canvas.viewport)
+        # self._border.transforms.configure(canvas=self.canvas,
+        #     viewport=self.canvas.viewport)
         self._border.pos     = self._pxlViewCenter
         self._border.halfdim = self._pxlViewSize/2
 
@@ -292,12 +361,11 @@ class Figure:
 
         self._transformCanvas['figure_pos' ] = self._pxlPos
         self._transformCanvas['figure_size'] = self._pxlSize
-        self._transformCanvas['canvas_size'] = pxlCanvasSize
+        self._transformCanvas['canvas_size'] = self.canvas.size
 
-        for plot in self._plots:
-            plot.canvasResized()
+        self._callItems('on_resize', event)
 
-    def canvasMouseWheel(self, event):
+    def on_mouse_wheel(self, event):
         if not self.isInside(event.pos): return
 
         scale = event.delta[0] if event.delta[0] else event.delta[1]
@@ -317,7 +385,9 @@ class Figure:
         delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
         self.pan = delta * (1 - scale) + self.pan * scale
 
-    def canvasMousePress(self, event):
+        super().on_mouse_wheel(self, event)
+
+    def on_mouse_press(self, event):
         if not self.isInside(event.pos): return
 
         if (event.button == 1 and 'Control' in event.modifiers):
@@ -325,7 +395,7 @@ class Figure:
             event.figure = self
             event.pan    = self.pan
 
-    def canvasMouseMove(self, event):
+    def on_mouse_move(self, event):
         if (event.press_event and hasattr(event.press_event, 'figure')
                 and event.press_event.figure == self
                 and event.press_event.button == 1
@@ -334,7 +404,7 @@ class Figure:
             delta = self._pxl2nrmView(event.pos - event.press_event.pos)
             self.pan = event.press_event.pan + delta
 
-    def canvasMouseRelease(self, event):
+    def on_mouse_release(self, event):
         if (event.press_event and hasattr(event.press_event, 'figure')
                 and event.press_event.figure == self
                 and event.press_event.button == 1
@@ -343,7 +413,7 @@ class Figure:
             delta = self._pxl2nrmView(event.pos-event.press_event.pos)
             self.pan = event.press_event.pan + delta
 
-    def canvasKeyRelease(self, event):
+    def on_key_release(self, event):
         if 'Control' in event.modifiers and event.key == '0':
             self.zoom = [1, 1]
             self.pan  = [0, 0]
@@ -352,8 +422,7 @@ class Figure:
         return ((self._pxlPos < pxl) & (pxl < self._pxlPos+self._pxlSize)).all()
 
     def draw(self):
-        for plot in self._plots:
-            plot.draw()
+        super().draw()
         self._visuals.draw()
 
 
@@ -386,6 +455,12 @@ class Scope(Figure, pipeline.Sampled):
         return self._tsFade
 
     def __init__(self, tsRange=10, tsFade=5, **kwargs):
+        '''
+        Args:
+            tsRange (float): Range of the active time window.
+            tsFade (float): Rage of fading the previous window data.
+        '''
+
         super().__init__(**kwargs)
 
         self._ns      = 0
@@ -396,9 +471,7 @@ class Scope(Figure, pipeline.Sampled):
         super()._configured(params)
 
         # inform plots of change in fs
-        for plot in self._plots:
-            if hasattr(plot, 'fsChanged'):
-                plot.fsChanged()
+        self._callItems('fsChanged')
 
     def write(self, data, source=None):
         super().write(data, source)
@@ -407,9 +480,7 @@ class Scope(Figure, pipeline.Sampled):
         self._ns += data.shape[1]
 
         # inform plots of change in ns/ts
-        for plot in self._plots:
-            if hasattr(plot, 'tsChanged'):
-                plot.tsChanged()
+        self._callItems('tsChanged')
 
 
 class AnalogPlot(pipeline.Sampled):
@@ -517,8 +588,8 @@ class AnalogPlot(pipeline.Sampled):
                 discard;
 
             // discard unwritten samples in the first time window
-            if (u_ns-1 <= v_sample_index)
-                discard;
+            //if (u_ns-1 <= v_sample_index)
+                //discard;
 
             // discard the fragment immediately after the last sample
             if (int(ns-1) == int(v_sample_index))
@@ -539,27 +610,6 @@ class AnalogPlot(pipeline.Sampled):
         }
         '''
 
-    _defaultColors = np.array([
-        [0 , 0,  .3],    # 1
-        [0 , 0 , .6],    # 2
-        [0 , 0 , 1 ],    # 3
-        [0 , .3, 1 ],    # 4
-        [0 , .6, 1 ],    # 5
-        [0 , .6, .6],    # 6
-        [0 , .3, 0 ],    # 7
-        [0 , .6, 0 ],    # 8
-        [0 , 1 , 0 ],    # 9
-        [.5, .6, 0 ],    # 10
-        [1 , .6, 0 ],    # 11
-        [.3, 0 , 0 ],    # 12
-        [.6, 0 , 0 ],    # 13
-        [1 , 0 , 0 ],    # 14
-        [1 , 0 , .3],    # 15
-        [1 , 0 , .6],    # 16
-        [.6, 0 , .6],    # 17
-        [.6, 0 , 1 ],    # 18
-        ])
-
     def __init__(self, figure, untPos=(0,0), untSize=(1,1), names=None,
             colors=None, **kwargs):
         '''
@@ -568,8 +618,6 @@ class AnalogPlot(pipeline.Sampled):
             untPos: Position of the plot in unit scene space.
             untSize: Size of the plot in unit scene space.
             names:
-            tsRange:
-            tsFade:
         '''
 
         if not isinstance(figure, Scope):
@@ -580,7 +628,7 @@ class AnalogPlot(pipeline.Sampled):
             raise TypeError('`names` should be None, iterable or callable')
 
         self._figure  = figure
-        self._canvas  = figure._canvas
+        self._canvas  = figure.canvas
         self._untPos  = untPos
         self._untSize = untSize
         self._names   = names
@@ -590,7 +638,7 @@ class AnalogPlot(pipeline.Sampled):
         self._program = None
         self._texts   = []
 
-        figure._plots += [self]
+        figure.addItem(self)
 
         super().__init__(**kwargs)
 
@@ -607,8 +655,8 @@ class AnalogPlot(pipeline.Sampled):
 
         # init local vars that depend on node configuration (fs and channels)
         if self._colors == None:
-            self._colors = self._defaultColors[
-                np.arange(self._channels) % len(self._defaultColors)]
+            self._colors = _defaultColors[np.arange(self._channels)
+                % len(_defaultColors)]
             # self._colors  = np.random.uniform(size=(self._channels, 3),
             #     low=.3, high=1)
         self._zooms   = int(np.round(np.log2(
@@ -686,15 +734,15 @@ class AnalogPlot(pipeline.Sampled):
         fig = self._figure
 
         for i in range(self._channels):
-            x = fig._pxlPos[0] + fig._pxlAxesSize[0] - 5
+            x = fig._pxlPos[0] + fig._pxlMargins[0] - 5
             y = (fig._pxlViewSize[1] * ((i+.5)/self._channels*self._untSize[1]
                 - .5 + self._untPos[1]) * fig._zoom[1]
                 - fig._pan[1]/2 * fig._pxlViewSize[1] + fig._pxlViewCenter[1])
             self._texts[i].pos = (x, y)
-            self._texts[i].visible = (fig._pxlAxesSize[1] < y - fig._pxlPos[1]
-                < fig._pxlAxesSize[3] + fig._pxlViewSize[1])
+            self._texts[i].visible = (fig._pxlMargins[1] < y - fig._pxlPos[1]
+                < fig._pxlMargins[3] + fig._pxlViewSize[1])
 
-    def canvasResized(self):
+    def on_resize(self, event):
         if self._program is None: return
 
         for text in self._texts:
@@ -703,7 +751,7 @@ class AnalogPlot(pipeline.Sampled):
 
         self._updateTexts()
 
-    def figureZoomed(self):
+    def zoomed(self):
         if self._program is None: return
 
         self._updateTexts()
@@ -717,7 +765,7 @@ class AnalogPlot(pipeline.Sampled):
                 self._zoom = zoom
                 self._updateProgram()
 
-    def figurePanned(self):
+    def panned(self):
         if self._program is None: return
 
         self._updateTexts()
@@ -725,8 +773,10 @@ class AnalogPlot(pipeline.Sampled):
     def draw(self):
         if self._program is None: return
 
+        # glEnable(GL_LINE_SMOOTH)
         with self._lock:
             self._program.draw('line_strip')
+        # glDisable(GL_LINE_SMOOTH)
 
         for text in self._texts:
             text.draw()
@@ -739,23 +789,12 @@ class AnalogPlot(pipeline.Sampled):
             self._program['a_data'] = buffer.data.astype(np.float32)
 
 
-class AnalogGenerator(pipeline.Sampled):
+class Generator(pipeline.Sampled):
     @property
     def paused(self):
         return not self._continueEvent.isSet()
 
     def __init__(self, fs, channels, **kwargs):
-        # randomized channel parameters
-        phases = np.random.uniform(size=(channels,1), low=0  , high=np.pi)
-        freqs  = np.random.uniform(size=(channels,1), low=1  , high=5    )
-        amps   = np.random.uniform(size=(channels,1), low=.05, high=.5   )
-        amps2  = np.random.uniform(size=(channels,1), low=.05, high=.2   )
-
-        # generate data as a (channels, ns) array.
-        self._gen = lambda ns1, ns2: (
-            amps * np.sin(2*np.pi*freqs*np.arange(ns1,ns2)/fs+phases)
-            + amps2 * np.random.randn(channels, ns2-ns1))
-
         self._ns = 0
         self._thread = threading.Thread(target=self._loop)
         self._thread.daemon = True
@@ -782,6 +821,9 @@ class AnalogGenerator(pipeline.Sampled):
             super().write(data, self)
             self._ns = ns
 
+    def _gen(self, ns1, ns2):
+        raise NotImplementedError()
+
     def start(self):
         self._continueEvent.set()
         if not self._thread.isAlive():
@@ -792,6 +834,45 @@ class AnalogGenerator(pipeline.Sampled):
 
     def write(self, data, source=None):
         raise RuntimeError('Cannot write to a Generator')
+
+
+class SineGenerator(Generator):
+    def __init__(self, fs, channels, noisy=True, **kwargs):
+        # randomized channel parameters
+        self._phases = np.random.uniform(0  , np.pi, (channels,1))
+        self._freqs  = np.random.uniform(1  , 5    , (channels,1))
+        self._amps   = np.random.uniform(.05, .5   , (channels,1))
+        self._amps2  = np.random.uniform(.05, .2   , (channels,1))
+        if not noisy:
+            self._amps2 *= 0
+
+        super().__init__(fs=fs, channels=channels, **kwargs)
+
+    def _gen(self, ns1, ns2):
+        # generate data as a (channels, ns) array.
+        return (self._amps * np.sin(2 * np.pi * self._freqs
+            * np.arange(ns1, ns2) / self._fs + self._phases)
+            + self._amps2 * np.random.randn(self._channels, ns2-ns1))
+
+
+class SpikeGenerator(Generator):
+    def _gen(self, ns1, ns2):
+        data = .1*np.random.randn(self._channels, ns2-ns1)
+        dt = (ns2-ns1)/self._fs
+
+        counts = np.random.uniform(0, dt*1000/25, self._channels)
+        counts = np.round(counts).astype(np.int)
+
+        for channel in range(self._channels):
+            for i in range(counts[channel]):
+                # random spike length, amplitude, and location
+                length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
+                amp    = np.random.uniform(.3, .7)
+                at     = int(np.random.uniform(0, data.shape[1]-length))
+                spike  = -amp*sp.signal.gaussian(length, length/7)
+                data[channel, at:at+length] += spike
+
+        return data
 
 
 class EpochPlot(pipeline.Node):
@@ -944,7 +1025,7 @@ class EpochPlot(pipeline.Node):
             raise TypeError('`names should be None or a string`')
 
         self._figure  = figure
-        self._canvas  = figure._canvas
+        self._canvas  = figure.canvas
         self._untPos  = untPos
         self._untSize = untSize
         self._color   = color
@@ -985,9 +1066,9 @@ class EpochPlot(pipeline.Node):
                 rotation=0, color=self._color) #self._figure.fgColor)
             self._text.anchors = ('right', 'center')
 
-        self._updateText()
+        # self._updateText()
 
-        figure._plots += [self]
+        figure.addItem(self)
 
         super().__init__(**kwargs)
 
@@ -996,25 +1077,25 @@ class EpochPlot(pipeline.Node):
 
         fig = self._figure
 
-        x = fig._pxlPos[0] + fig._pxlAxesSize[0] - 5
+        x = fig._pxlPos[0] + fig._pxlMargins[0] - 5
         y = (fig._pxlViewSize[1] * (self._untSize[1]/2
             - .5 + self._untPos[1]) * fig._zoom[1]
             - fig._pan[1]/2 * fig._pxlViewSize[1] + fig._pxlViewCenter[1])
         self._text.pos = (x, y)
-        self._text.visible = (fig._pxlAxesSize[1] < y - fig._pxlPos[1]
-            < fig._pxlAxesSize[3] + fig._pxlViewSize[1])
+        self._text.visible = (fig._pxlMargins[1] < y - fig._pxlPos[1]
+            < fig._pxlMargins[3] + fig._pxlViewSize[1])
 
-    def canvasResized(self):
+    def on_resize(self, event):
         if self._text:
             self._text.transforms.configure(canvas=self._canvas,
                 viewport=self._canvas.viewport)
 
         self._updateText()
 
-    def figureZoomed(self):
+    def zoomed(self):
         self._updateText()
 
-    def figurePanned(self):
+    def panned(self):
         self._updateText()
 
     def fsChanged(self):
@@ -1073,22 +1154,32 @@ class MainWindow(QtWidgets.QWidget):
         super(MainWindow, self).__init__()
 
         self.canvas     = Canvas()
-        self.scope      = Scope(canvas=self.canvas, untPos=(0,0),
-            untSize=(1,1))
-        self.analogPlot = AnalogPlot(self.scope, untPos=(0,0), untSize=(1,.9),
-            names=str)
-        self.targetPlot = EpochPlot(self.scope, untPos=(0,.9), untSize=(1,.05),
-            name='Target', color=(0,1,0,.7))
-        self.pumpPlot   = EpochPlot(self.scope, untPos=(0,.95), untSize=(1,.05),
-            name='Pump', color=(0,0,1,.7))
+        self.scope      = Scope(parent=self.canvas, untPos=(0,0),
+            untSize=(.6,1), pxlMargins=(60,15,15,15))
+        self.analogPlot = AnalogPlot(self.scope, untPos=(0,0),
+            untSize=(1,.9), names=str)
+        self.targetPlot = EpochPlot(self.scope, untPos=(0,.9),
+            untSize=(1,.05), name='Target', color=(0,1,0,.7))
+        self.pumpPlot   = EpochPlot(self.scope, untPos=(0,.95),
+            untSize=(1,.05), name='Pump', color=(0,0,1,.7))
+        # self.targetPlot.write([2,4])
 
+        self.cont = Container(parent=self.canvas, untPos=(.6,0),
+            untSize=(.4,1), pxlMargins=(0,15,15,15))
 
-        self.targetPlot.write([2,4])
-        self.analogGenerator = AnalogGenerator(fs=31.25e3, channels=15)
-        self.analogGenerator >> self.scope >> self.analogPlot
-        self.analogGenerator.start()
+        self.figs = [None]*16
+        for i in range(len(self.figs)):
+            self.figs[i] = Figure(parent=self.cont,
+                untPos=(.25*(i%4),.25*(i//4)), untSize=(.25,.25),
+                pxlMargins=(0,0,0 if i%4==3 else 1,0 if i//4==3 else 1))
 
-        self.canvas.spacePressed = self.spacePressed
+        self.generator = SpikeGenerator(fs=31.25e3, channels=15)
+        self.filter = pipeline.LFilter(fl=300, fh=6000)
+
+        self.generator >> self.scope >> self.analogPlot
+        self.generator.start()
+
+        self.canvas.keyReleased = self.keyReleased
 
         self.button = QtWidgets.QPushButton('Test')
 
@@ -1099,13 +1190,16 @@ class MainWindow(QtWidgets.QWidget):
 
         self.setLayout(mainLayout)
 
-    def spacePressed(self):
-        self.targetPlot.write(self.scope.ts)
-        self.pumpPlot.write(self.scope.ts+1)
-        # if self.analogGenerator.paused:
-        #     self.analogGenerator.start()
-        # else:
-        #     self.analogGenerator.pause()
+    def keyReleased(self, event):
+        if event.key == 'space':
+            if self.generator.paused:
+                self.generator.start()
+            else:
+                self.generator.pause()
+        elif event.key == 't':
+            self.targetPlot.write(self.scope.ts)
+        elif event.key == 'p':
+            self.pumpPlot.write(self.scope.ts)
 
 
 if __name__ == '__main__':
