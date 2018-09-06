@@ -38,333 +38,379 @@ _glslRand = vp.visuals.shaders.Function('''
     ''')
 
 
-class AnalogGenerator(pipeline.Sampled):
+class Canvas(vp.app.Canvas):
     @property
-    def paused(self):
-        return not self._continueEvent.isSet()
+    def bgColor(self):
+        return self._bgColor
 
-    def __init__(self, fs, channels, **kwargs):
-        # randomized channel parameters
-        phases = np.random.uniform(size=(channels,1), low=0  , high=np.pi)
-        freqs  = np.random.uniform(size=(channels,1), low=1  , high=5    )
-        amps   = np.random.uniform(size=(channels,1), low=.05, high=.5   )
-        amps2  = np.random.uniform(size=(channels,1), low=.05, high=.2   )
+    @property
+    def fgColor(self):
+        return self._fgColor
 
-        # generate data as a (channels, ns) array.
-        self._gen = lambda ns1, ns2: (
-            amps * np.sin(2*np.pi*freqs*np.arange(ns1,ns2)/fs+phases)
-            + amps2 * np.random.randn(channels, ns2-ns1))
+    @property
+    def viewport(self):
+        return (0, 0, *self.physical_size)
 
-        self._ns = 0
-        self._thread = threading.Thread(target=self._loop)
-        self._thread.daemon = True
-        self._continueEvent = threading.Event()
+    def __init__(self, bgColor=(1,1,1), fgColor=(.2,.2,.2)):
 
-        super().__init__(fs=fs, channels=channels, **kwargs)
+        super().__init__(vsync=True, config=dict(samples=4))
 
-    def _addSources(self, sources):
-        raise RuntimeError('Cannot add source for a Generator')
+        self._bgColor   = bgColor
+        self._fgColor   = fgColor
+        self._figures   = []
 
-    def _loop(self):
-        start = dt.datetime.now()
-        pauseTS = 0
+        vp.gloo.set_state(clear_color=bgColor, blend=True, depth_test=False)
 
-        while True:
-            time.sleep(.01)
-            if not self._continueEvent.isSet():
-                pause = dt.datetime.now()
-                self._continueEvent.wait()
-                pauseTS += (dt.datetime.now()-pause).total_seconds()
-            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
-            ns = int(ts * self._fs)
-            data = self._gen(self._ns, ns)
-            super().write(data, self)
-            self._ns = ns
+        self._fpsText = vp.visuals.TextVisual('0.0', bold=True, color=fgColor,
+            pos=(1,1), font_size=8)
+        self._fpsText.anchors = ('left', 'top')
+        self._mouseText = vp.visuals.TextVisual('', bold=True, color=fgColor,
+            pos=(30,1), font_size=8)
+        self._mouseText.anchors = ('left', 'top')
 
-    def start(self):
-        self._continueEvent.set()
-        if not self._thread.isAlive():
-            self._thread.start()
+        self._visuals = vp.visuals.CompoundVisual(
+            [self._fpsText,
+            # self._mouseText,
+            ])
 
-    def pause(self):
-        self._continueEvent.clear()
+        self._updateLast  = None
+        self._updateTimes = []    # keep last update times for measuring FPS
+        self._startTime   = dt.datetime.now()
+        self._timer       = vp.app.Timer('auto', connect=self.on_timer)
 
-    def write(self, data, source=None):
-        raise RuntimeError('Cannot write to a Generator')
+        self._timer.start()
+
+    def on_resize(self, event):
+        self.context.set_viewport(*self.viewport)
+        self._visuals.transforms.configure(canvas=self, viewport=self.viewport)
+
+        for figure in self._figures:
+            figure.canvasResized()
+
+    def on_mouse_wheel(self, event):
+        for figure in self._figures:
+            figure.canvasMouseWheel(event)
+
+    def on_mouse_press(self, event):
+        for figure in self._figures:
+            figure.canvasMousePress(event)
+
+    def on_mouse_move(self, event):
+        self._mouseText.text = str(event.pos)
+        for figure in self._figures:
+            figure.canvasMouseMove(event)
+
+    def on_mouse_release(self, event):
+        for figure in self._figures:
+            figure.canvasMouseRelease(event)
+
+    def on_key_release(self, event):
+        for figure in self._figures:
+            figure.canvasKeyRelease(event)
+
+        if event.key == 'space' and hasattr(self, 'spacePressed'):
+            self.spacePressed()
+
+        # elif 'Control' in event.modifiers and event.key == 'left':
+        #     if self.pan_view(self._viewSize/10*[1,0]):
+        #         self.update()
+        # elif 'Control' in event.modifiers and event.key == 'right':
+        #     if self.pan_view(self._viewSize/10*[-1,0]):
+        #         self.update()
+        # elif 'Control' in event.modifiers and event.key == 'up':
+        #     if self.pan_view(self._viewSize/10*[0,1]):
+        #         self.update()
+        # elif 'Control' in event.modifiers and event.key == 'down':
+        #     if self.pan_view(self._viewSize/10*[0,-1]):
+        #         self.update()
+
+    def on_timer(self, event):
+        self.update()
+
+    def on_draw(self, event):
+        if self._updateLast is not None:
+            updateTime = (dt.datetime.now() -
+                self._updateLast).total_seconds()
+            self._updateTimes.append(updateTime)
+            if len(self._updateTimes)>60:
+                self._updateTimes.pop(0)
+            updateMean = np.mean(self._updateTimes)
+            fps = 1/updateMean if updateMean else 0
+            self._fps = fps
+            self._fpsText.text = '%.1f' % fps
+        self._updateLast = dt.datetime.now()
+
+        vp.gloo.clear()
+        # glEnable(GL_LINE_STIPPLE)
+        # glLineStipple(50, 0b1010101010101010)
+        # self._line.draw()
+        # glDisable(GL_LINE_STIPPLE)
+        # glLineWidth(1)
+        for figure in self._figures:
+            figure.draw()
+        self._visuals.draw()
 
 
-class EpochPlot(pipeline.Node):
-    _vertShaderSource = '''
-        uniform   vec2  u_plot_pos;
-        uniform   vec2  u_plot_size;
-        //uniform   vec3  u_bg_color;
-        uniform   vec4  u_color;
-        uniform   float u_fs;
-        uniform   float u_ts;
-        uniform   float u_ts_range;
-        uniform   float u_ts_fade;
-
-        attribute float a_index;
-        attribute float a_data;
-        attribute float a_data2;
-
-        varying   float v_epoch_index;
-        varying   float v_epoch_ts;
-        varying   vec2  v_pos_raw;
-        varying   vec2  v_pos_plot;
-        varying   vec2  v_pos_scene;
-        varying   vec2  v_pos_view;
-        varying   vec2  v_pos_figure;
-        varying   vec2  v_pos_canvas;
-
-        void main() {
-            v_epoch_index   = floor(a_index/4);
-            v_epoch_ts      = a_data;
-
-            float ts_window = floor(u_ts / u_ts_range) * u_ts_range;
-            bool  start     = mod(int(a_index), 2) == 0;
-            bool  stop      = mod(int(a_index), 2) == 1;
-            bool  ghost     = mod(int(v_epoch_index), 2) == 1;
-
-            // unstopped epochs that their start timestamp is larger than
-            // the current timestamp should be discarded in fragment shader
-            if (start && a_data2<0 && u_ts<v_epoch_ts)
-                v_epoch_ts  = -1;
-
-            // set stop timestamp of unstopped epochs to the current timestamp
-            if (stop && v_epoch_ts<0 && 0<=a_data2 && a_data2<=u_ts)
-                v_epoch_ts  = u_ts;
-
-            v_pos_raw       = vec2(v_epoch_ts - ts_window,
-                mod(floor(a_index/2), 2));
-
-            // ghosting for screen wrapping
-            if (ghost && v_epoch_ts>=0)
-                v_pos_raw.x += u_ts_range;
-
-            // all calculated coordinates below are in normalized space, i.e.:
-            // -1 bottom-left to +1 top-right
-
-            // plot (only current plot)
-            v_pos_plot       = $transform(v_pos_raw,
-                2 / (u_ts_range - 1/u_fs), 2,
-                -1, -1);
-
-            // scene (all plots, before pan & zoom)
-            v_pos_scene      = $transform(v_pos_plot,
-                u_plot_size,
-                ((u_plot_pos + u_plot_size/2) * 2 - 1) * vec2(1,-1));
-
-            // view (after pan & zoom)
-            v_pos_view       = $transform_view(v_pos_scene);
-
-            // figure (title and axes)
-            v_pos_figure     = $transform_figure(v_pos_view);
-
-            // canvas
-            v_pos_canvas     = $transform_canvas(v_pos_figure);
-
-            gl_Position      = vec4(v_pos_canvas, 0, 1);
-        }
-        '''
-
-    _fragShaderSource = '''
-        uniform   vec2  u_plot_pos;
-        uniform   vec2  u_plot_size;
-        //uniform   vec3  u_bg_color;
-        uniform   vec4  u_color;
-        uniform   float u_ts;
-        uniform   float u_ts_range;
-        uniform   float u_ts_fade;
-
-        varying   float v_epoch_index;
-        varying   float v_epoch_ts;
-        varying   vec2  v_pos_raw;
-        varying   vec2  v_pos_plot;
-        varying   vec2  v_pos_scene;
-        varying   vec2  v_pos_view;
-        varying   vec2  v_pos_figure;
-        varying   vec2  v_pos_canvas;
-
-        //float fade_lin(float ns) {
-        //    return (v_sample_index-ns)/u_ns_fade;
-        //}
-
-        float fade_sin(float ts) {
-            return sin(((v_pos_raw.x-ts)/u_ts_fade*2-1)*3.1415/2)/2+.5;
-        }
-
-        //float fade_pow3(float ns) {
-        //    return pow((v_sample_index-ns)/u_ns_fade*2-1, 3)/2+.5;
-        //}
-
-        void main() {
-            float ts_window = floor(u_ts / u_ts_range) * u_ts_range;
-            float ts = u_ts - ts_window;
-
-            // discard the fragments between epochs
-            if (0 < fract(v_epoch_index))
-                discard;
-
-            // clip to view space
-            if (1 < abs(v_pos_view.x) || 1 < abs(v_pos_view.y))
-                discard;
-
-            // discard unwritten samples in the first time window
-            if (v_epoch_ts < u_ts-u_ts_range || u_ts < v_epoch_ts)
-                discard;
-
-            // calculate fading factor
-            float fade = 1.;
-            if (ts <= v_pos_raw.x && v_pos_raw.x <= ts+u_ts_fade)
-                fade = fade_sin(ts);
-            if (ts-u_ts_range <= v_pos_raw.x &&
-                    v_pos_raw.x <= ts+u_ts_fade-u_ts_range)
-                fade = fade_sin(ts-u_ts_range);
-
-            // set fragment color
-            //gl_FragColor = vec4(u_color.rgb*fade + u_bg_color*(1-fade), 1.);
-            gl_FragColor = u_color;
-            gl_FragColor.a *= fade;
-            //gl_FragColor.r += ($rand(v_pos_raw+1)-.5)/255;
-            //gl_FragColor.g += ($rand(v_pos_raw+2)-.5)/255;
-            //gl_FragColor.b += ($rand(v_pos_raw+3)-.5)/255;
-            gl_FragColor.a += ($rand(v_pos_raw+4)-.5)/255;
-        }
-        '''
-
-    def __init__(self, figure, untPos=(0,0), untSize=(1,1), name=None,
-            color=(0,1,0,.6), **kwargs):
-
-        if not isinstance(figure, Scope):
-            raise TypeError('`figure` should be an instance of Scope')
-
-        if name is not None and not isinstance(name, str):
-            raise TypeError('`names should be None or a string`')
-
-        self._figure  = figure
-        self._canvas  = figure._canvas
-        self._untPos  = untPos
-        self._untSize = untSize
-        self._color   = color
-        self._name    = name
-        self._lock    = threading.Lock()
-        self._cache   = 100*8    # cache 100 epochs
-        self._pointer = 0
-        self._partial = None
-        self._index   = np.arange(self._cache, dtype=np.float32)
-        self._data    = np.zeros (self._cache, dtype=np.float32)-1
-
-        self._program = vp.visuals.shaders.ModularProgram(
-            self._vertShaderSource, self._fragShaderSource)
-
-        self._program.vert['transform_view'  ] = self._figure._transformView
-        self._program.vert['transform_figure'] = self._figure._transformFigure
-        self._program.vert['transform_canvas'] = self._figure._transformCanvas
-        self._program.vert['transform'       ] = _glslTransform
-        self._program.frag['rand'            ] = _glslRand
-
-        self._program     ['u_plot_pos'      ] = self._untPos
-        self._program     ['u_plot_size'     ] = self._untSize
-        # self._program     ['u_bg_color'      ] = self._figure.bgColor
-        self._program     ['u_color'         ] = self._color
-        self._program     ['u_ts'            ] = 0
-        self._program     ['u_ts_range'      ] = self._figure.tsRange
-        self._program     ['u_ts_fade'       ] = self._figure.tsFade
-
-        self._program     ['a_index'         ] = self._index
-        self._program     ['a_data'          ] = self._data
-        self._program     ['a_data2'         ] = self._data.reshape(
-                                                (-1,2))[:,::-1].ravel()
-
-        if name is None:
-            self._text = None
+class Figure:
+    @property
+    def bgColor(self):
+        if self._bgColor is None:
+            return self._canvas.bgColor
         else:
-            self._text = vp.visuals.TextVisual(name, bold=True, font_size=10,
-                rotation=0, color=self._color) #self._figure.fgColor)
-            self._text.anchors = ('right', 'center')
+            return self._bgColor
 
-        self._updateText()
+    @property
+    def fgColor(self):
+        if self._fgColor is None:
+            return self._canvas.fgColor
+        else:
+            return self._fgColor
 
-        figure._plots += [self]
+    @property
+    def zoom(self):
+        return self._zoom
 
-        super().__init__(**kwargs)
+    @zoom.setter
+    def zoom(self, zoom):
+        zoom = np.array(zoom)
+        zoom = zoom.clip(1, 1000)
+        self._zoom = zoom
+        self._transformView['zoom'] = zoom
+        for plot in self._plots:
+            plot.figureZoomed()
+        self._canvas.update()
 
-    def _updateText(self):
-        if not self._text: return
+    @property
+    def pan(self):
+        return self._pan
 
-        fig = self._figure
+    @pan.setter
+    def pan(self, pan):
+        # `pan` is normalized in view space
+        panLimits = self._zoom-1
+        pan = np.array(pan)
+        pan = pan.clip(-panLimits, panLimits)
+        self._pan = pan
+        self._transformView['pan'] = pan
+        for plot in self._plots:
+            plot.figurePanned()
+        self._canvas.update()
 
-        x = fig._pxlPos[0] + fig._pxlAxesSize[0] - 5
-        y = (fig._pxlViewSize[1] * (self._untSize[1]/2
-            - .5 + self._untPos[1]) * fig._zoom[1]
-            - fig._pan[1]/2 * fig._pxlViewSize[1] + fig._pxlViewCenter[1])
-        self._text.pos = (x, y)
-        self._text.visible = (fig._pxlAxesSize[1] < y - fig._pxlPos[1]
-            < fig._pxlAxesSize[3] + fig._pxlViewSize[1])
+    def __init__(self, canvas=None, untPos=(0,0), untSize=(1,1),
+            pxlAxesSize=(60,15,15,15), bgColor=None, fgColor=None,
+            borderWidth=1):
+        '''
+        Args:
+            untPos: Position of figure in unit canvas space: (x, y).
+            untSize: Size of figure in unit canvas space: (w, h).
+            fgColor: Foreground color for border and texts. If None, defaults
+                to canvas.fgColor.
+            pxlAxesSize: Margins between the view and the figure in pixels:
+                (l, t, r, b).
+        '''
+
+        # allow childs to mix with other classes
+        super().__init__()
+
+        if not isinstance(canvas, Canvas):
+            raise TypeError('`canvas` should be instance of Canvas')
+
+        self._canvas      = canvas
+        self._untPos      = np.array(untPos)
+        self._untSize     = np.array(untSize)
+        self._pxlAxesSize = np.array(pxlAxesSize)
+        self._bgColor     = bgColor
+        self._fgColor     = fgColor
+
+        self._plots       = []
+        self._zoom        = np.array([1, 1])
+        self._pan         = np.array([0, 0])
+
+        self._transformView = vp.visuals.shaders.Function('''
+            vec2 transform_view(vec2 pos) {
+                return $transform(pos, $zoom, $pan);
+            }''')
+        self._transformView['transform'] = _glslTransform
+        self._transformView['zoom'] = self._zoom
+        self._transformView['pan' ] = self._pan
+
+        self._transformFigure = vp.visuals.shaders.Function('''
+            vec2 transform_figure(vec2 pos) {
+                return $transform(pos,
+                    $view_size / $figure_size,
+                    ($axes_size.xy - $axes_size.wz) / $figure_size
+                    * vec2(1,-1));
+            }''')
+        self._transformFigure['transform'] = _glslTransform
+        self._transformFigure['axes_size'] = self._pxlAxesSize
+
+        self._transformCanvas = vp.visuals.shaders.Function('''
+            vec2 transform_canvas(vec2 pos) {
+                return $transform(pos,
+                    $figure_size / $canvas_size,
+                    (($figure_pos + $figure_size/2) * 2 / $canvas_size - 1)
+                    * vec2(1,-1));
+            }''')
+        self._transformCanvas['transform'] = _glslTransform
+
+        self._border = vp.visuals._BorderVisual(pos=(0,0), halfdim=(0,0),
+            border_width=borderWidth, border_color=self.fgColor)
+        # self._line = vp.visuals.LineVisual(np.array([[0, 0], [500,500]]))
+
+        self._visuals = vp.visuals.CompoundVisual(
+            [
+            self._border,
+            # self._line,
+            ])
+
+        self.canvasResized()
+
+        canvas._figures += [self]
+
+    def _pxl2nrmView(self, pxlDelta):
+        # translate a delta (dx, dy) from pixels to normalized in view space
+        # mainly used for panning
+        return pxlDelta * 2 / self._pxlViewSize * [1, -1]
 
     def canvasResized(self):
-        if self._text:
-            self._text.transforms.configure(canvas=self._canvas,
-                viewport=self._canvas.viewport)
+        pxlCanvasSize = np.array(self._canvas.size)
+        self._pxlPos  = self._untPos * pxlCanvasSize
+        self._pxlSize = self._untSize * pxlCanvasSize
+        self._pxlViewCenter = self._pxlPos + (self._pxlSize
+            + self._pxlAxesSize[0:2] - self._pxlAxesSize[2:4])/2
+        self._pxlViewSize   = (self._pxlSize - self._pxlAxesSize[0:2] -
+            self._pxlAxesSize[2:4])
 
-        self._updateText()
+        self._visuals.transforms.configure(canvas=self._canvas,
+            viewport=self._canvas.viewport)
+        # self._line.transforms.configure(canvas=self, viewport=viewport)
+        self._border.pos     = self._pxlViewCenter
+        self._border.halfdim = self._pxlViewSize/2
 
-    def figureZoomed(self):
-        self._updateText()
+        self._transformFigure['view_size'  ] = self._pxlViewSize
+        self._transformFigure['figure_size'] = self._pxlSize
 
-    def figurePanned(self):
-        self._updateText()
+        self._transformCanvas['figure_pos' ] = self._pxlPos
+        self._transformCanvas['figure_size'] = self._pxlSize
+        self._transformCanvas['canvas_size'] = pxlCanvasSize
 
-    def fsChanged(self):
-        self._program['u_fs'] = self._figure._fs
+        for plot in self._plots:
+            plot.canvasResized()
 
-    def tsChanged(self):
-        self._program['u_ts'] = self._figure.ts
+    def canvasMouseWheel(self, event):
+        if not self.isInside(event.pos): return
+
+        scale = event.delta[0] if event.delta[0] else event.delta[1]
+        scale = math.exp(scale * .15)
+        if 'Control' in event.modifiers:    # both x and y zoom
+            scale = np.array([scale, scale])
+        elif 'Shift' in event.modifiers:
+            scale = np.array([scale, 1])    # only x zoom
+        elif 'Alt' in event.modifiers:
+            scale = np.array([1, scale])    # only y zoom
+        else:
+            return                          # no zoom
+
+        zoom = self.zoom
+        self.zoom = zoom * scale
+        scale = self.zoom / zoom
+        delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
+        self.pan = delta * (1 - scale) + self.pan * scale
+
+    def canvasMousePress(self, event):
+        if not self.isInside(event.pos): return
+
+        if (event.button == 1 and 'Control' in event.modifiers):
+            # start pan
+            event.figure = self
+            event.pan    = self.pan
+
+    def canvasMouseMove(self, event):
+        if (event.press_event and hasattr(event.press_event, 'figure')
+                and event.press_event.figure == self
+                and event.press_event.button == 1
+                and 'Control' in event.press_event.modifiers):
+            # pan
+            delta = self._pxl2nrmView(event.pos - event.press_event.pos)
+            self.pan = event.press_event.pan + delta
+
+    def canvasMouseRelease(self, event):
+        if (event.press_event and hasattr(event.press_event, 'figure')
+                and event.press_event.figure == self
+                and event.press_event.button == 1
+                and 'Control' in event.press_event.modifiers):
+            # stop pan
+            delta = self._pxl2nrmView(event.pos-event.press_event.pos)
+            self.pan = event.press_event.pan + delta
+
+    def canvasKeyRelease(self, event):
+        if 'Control' in event.modifiers and event.key == '0':
+            self.zoom = [1, 1]
+            self.pan  = [0, 0]
+
+    def isInside(self, pxl):
+        return ((self._pxlPos < pxl) & (pxl < self._pxlPos+self._pxlSize)).all()
 
     def draw(self):
-        with self._lock:
-            self._program.draw('triangle_strip')
+        for plot in self._plots:
+            plot.draw()
+        self._visuals.draw()
 
-        self._text.draw()
+
+class Scope(Figure, pipeline.Sampled):
+    @property
+    def ns(self):
+        return self._ns
+
+    @property
+    def ts(self):
+        if self._fs is None:
+            # node not configured yet
+            return 0
+        elif self._ns == 0:
+            return 0
+        else:
+            return (self._ns - 1) / self._fs
+
+    @property
+    def tsRange(self):
+        return self._tsRange
+
+    @tsRange.setter
+    def tsRange(self, tsRange):
+        raise NotImplementedError()
+        # self._tsRange = tsRange
+
+    @property
+    def tsFade(self):
+        return self._tsFade
+
+    def __init__(self, tsRange=10, tsFade=5, **kwargs):
+        super().__init__(**kwargs)
+
+        self._ns      = 0
+        self._tsRange = tsRange
+        self._tsFade  = tsFade
+
+    def _configured(self, params):
+        super()._configured(params)
+
+        # inform plots of change in fs
+        for plot in self._plots:
+            if hasattr(plot, 'fsChanged'):
+                plot.fsChanged()
 
     def write(self, data, source=None):
         super().write(data, source)
 
-        if not isinstance(data, np.ndarray): data = np.array(data)
-        if data.ndim == 0: data = data[np.newaxis]
-        if data.ndim != 1: raise ValueError('`data` should be 1D')
+        # increment total number of samples
+        self._ns += data.shape[1]
 
-        # when last added epoch has been partial, complete the epoch by adding
-        # its start timestamp to the beginning of current data
-        if self._partial is not None:
-            data = np.insert(data, 0, self._partial)
-            self._partial = None
+        # inform plots of change in ns/ts
+        for plot in self._plots:
+            if hasattr(plot, 'tsChanged'):
+                plot.tsChanged()
 
-        # when last epoch in the current data is partial, save its start
-        # timestamp for the next write operation (see above)
-        if len(data)%2 != 0:
-            self._partial = data[-1]
-            data = np.append(data, -1)
-
-        # repeat each timestamp 4 times, 2 for top and bottom vertex of
-        # the epoch rectangle and 2 for ghosting and screen wrapping
-        data    = data.reshape((-1,2)).repeat(4,axis=0).ravel()
-        # write data to (circular) buffer
-        window  = np.arange(self._pointer, self._pointer+len(data))
-        window %= self._cache
-        self._data[window] = data
-
-        if self._partial is None:
-            self._pointer += len(data)
-        else:
-            self._pointer += len(data) - 8
-
-        with self._lock:
-            self._program['a_data' ] = self._data
-            # swap epoch starts and stops
-            self._program['a_data2'] = self._data.reshape(
-                (-1,2))[:,::-1].ravel()
 
 class AnalogPlot(pipeline.Sampled):
     _vertShaderSource = '''
@@ -693,378 +739,333 @@ class AnalogPlot(pipeline.Sampled):
             self._program['a_data'] = buffer.data.astype(np.float32)
 
 
-class Figure:
+class AnalogGenerator(pipeline.Sampled):
     @property
-    def bgColor(self):
-        if self._bgColor is None:
-            return self._canvas.bgColor
-        else:
-            return self._bgColor
+    def paused(self):
+        return not self._continueEvent.isSet()
 
-    @property
-    def fgColor(self):
-        if self._fgColor is None:
-            return self._canvas.fgColor
-        else:
-            return self._fgColor
+    def __init__(self, fs, channels, **kwargs):
+        # randomized channel parameters
+        phases = np.random.uniform(size=(channels,1), low=0  , high=np.pi)
+        freqs  = np.random.uniform(size=(channels,1), low=1  , high=5    )
+        amps   = np.random.uniform(size=(channels,1), low=.05, high=.5   )
+        amps2  = np.random.uniform(size=(channels,1), low=.05, high=.2   )
 
-    @property
-    def zoom(self):
-        return self._zoom
+        # generate data as a (channels, ns) array.
+        self._gen = lambda ns1, ns2: (
+            amps * np.sin(2*np.pi*freqs*np.arange(ns1,ns2)/fs+phases)
+            + amps2 * np.random.randn(channels, ns2-ns1))
 
-    @zoom.setter
-    def zoom(self, zoom):
-        zoom = np.array(zoom)
-        zoom = zoom.clip(1, 1000)
-        self._zoom = zoom
-        self._transformView['zoom'] = zoom
-        for plot in self._plots:
-            plot.figureZoomed()
-        self._canvas.update()
+        self._ns = 0
+        self._thread = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._continueEvent = threading.Event()
 
-    @property
-    def pan(self):
-        return self._pan
+        super().__init__(fs=fs, channels=channels, **kwargs)
 
-    @pan.setter
-    def pan(self, pan):
-        # `pan` is normalized in view space
-        panLimits = self._zoom-1
-        pan = np.array(pan)
-        pan = pan.clip(-panLimits, panLimits)
-        self._pan = pan
-        self._transformView['pan'] = pan
-        for plot in self._plots:
-            plot.figurePanned()
-        self._canvas.update()
+    def _addSources(self, sources):
+        raise RuntimeError('Cannot add source for a Generator')
 
-    def __init__(self, canvas=None, untPos=(0,0), untSize=(1,1),
-            pxlAxesSize=(60,15,15,15), bgColor=None, fgColor=None,
-            borderWidth=1):
+    def _loop(self):
+        start = dt.datetime.now()
+        pauseTS = 0
+
+        while True:
+            time.sleep(.01)
+            if not self._continueEvent.isSet():
+                pause = dt.datetime.now()
+                self._continueEvent.wait()
+                pauseTS += (dt.datetime.now()-pause).total_seconds()
+            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
+            ns = int(ts * self._fs)
+            data = self._gen(self._ns, ns)
+            super().write(data, self)
+            self._ns = ns
+
+    def start(self):
+        self._continueEvent.set()
+        if not self._thread.isAlive():
+            self._thread.start()
+
+    def pause(self):
+        self._continueEvent.clear()
+
+    def write(self, data, source=None):
+        raise RuntimeError('Cannot write to a Generator')
+
+
+class EpochPlot(pipeline.Node):
+    _vertShaderSource = '''
+        uniform   vec2  u_plot_pos;
+        uniform   vec2  u_plot_size;
+        //uniform   vec3  u_bg_color;
+        uniform   vec4  u_color;
+        uniform   float u_fs;
+        uniform   float u_ts;
+        uniform   float u_ts_range;
+        uniform   float u_ts_fade;
+
+        attribute float a_index;
+        attribute float a_data;
+        attribute float a_data2;
+
+        varying   float v_epoch_index;
+        varying   float v_epoch_ts;
+        varying   vec2  v_pos_raw;
+        varying   vec2  v_pos_plot;
+        varying   vec2  v_pos_scene;
+        varying   vec2  v_pos_view;
+        varying   vec2  v_pos_figure;
+        varying   vec2  v_pos_canvas;
+
+        void main() {
+            v_epoch_index   = floor(a_index/4);
+            v_epoch_ts      = a_data;
+
+            float ts_window = floor(u_ts / u_ts_range) * u_ts_range;
+            bool  start     = mod(int(a_index), 2) == 0;
+            bool  stop      = mod(int(a_index), 2) == 1;
+            bool  ghost     = mod(int(v_epoch_index), 2) == 1;
+
+            // unstopped epochs that their start timestamp is larger than
+            // the current timestamp should be discarded in fragment shader
+            if (start && a_data2<0 && u_ts<v_epoch_ts)
+                v_epoch_ts  = -1;
+
+            // set stop timestamp of unstopped epochs to the current timestamp
+            if (stop && v_epoch_ts<0 && 0<=a_data2 && a_data2<=u_ts)
+                v_epoch_ts  = u_ts;
+
+            v_pos_raw       = vec2(v_epoch_ts - ts_window,
+                mod(floor(a_index/2), 2));
+
+            // ghosting for screen wrapping
+            if (ghost && v_epoch_ts>=0)
+                v_pos_raw.x += u_ts_range;
+
+            // all calculated coordinates below are in normalized space, i.e.:
+            // -1 bottom-left to +1 top-right
+
+            // plot (only current plot)
+            v_pos_plot       = $transform(v_pos_raw,
+                2 / (u_ts_range - 1/u_fs), 2,
+                -1, -1);
+
+            // scene (all plots, before pan & zoom)
+            v_pos_scene      = $transform(v_pos_plot,
+                u_plot_size,
+                ((u_plot_pos + u_plot_size/2) * 2 - 1) * vec2(1,-1));
+
+            // view (after pan & zoom)
+            v_pos_view       = $transform_view(v_pos_scene);
+
+            // figure (title and axes)
+            v_pos_figure     = $transform_figure(v_pos_view);
+
+            // canvas
+            v_pos_canvas     = $transform_canvas(v_pos_figure);
+
+            gl_Position      = vec4(v_pos_canvas, 0, 1);
+        }
         '''
-        Args:
-            untPos: Position of figure in unit canvas space: (x, y).
-            untSize: Size of figure in unit canvas space: (w, h).
-            fgColor: Foreground color for border and texts. If None, defaults
-                to canvas.fgColor.
-            pxlAxesSize: Margins between the view and the figure in pixels:
-                (l, t, r, b).
+
+    _fragShaderSource = '''
+        uniform   vec2  u_plot_pos;
+        uniform   vec2  u_plot_size;
+        //uniform   vec3  u_bg_color;
+        uniform   vec4  u_color;
+        uniform   float u_ts;
+        uniform   float u_ts_range;
+        uniform   float u_ts_fade;
+
+        varying   float v_epoch_index;
+        varying   float v_epoch_ts;
+        varying   vec2  v_pos_raw;
+        varying   vec2  v_pos_plot;
+        varying   vec2  v_pos_scene;
+        varying   vec2  v_pos_view;
+        varying   vec2  v_pos_figure;
+        varying   vec2  v_pos_canvas;
+
+        //float fade_lin(float ns) {
+        //    return (v_sample_index-ns)/u_ns_fade;
+        //}
+
+        float fade_sin(float ts) {
+            return sin(((v_pos_raw.x-ts)/u_ts_fade*2-1)*3.1415/2)/2+.5;
+        }
+
+        //float fade_pow3(float ns) {
+        //    return pow((v_sample_index-ns)/u_ns_fade*2-1, 3)/2+.5;
+        //}
+
+        void main() {
+            float ts_window = floor(u_ts / u_ts_range) * u_ts_range;
+            float ts = u_ts - ts_window;
+
+            // discard the fragments between epochs
+            if (0 < fract(v_epoch_index))
+                discard;
+
+            // clip to view space
+            if (1 < abs(v_pos_view.x) || 1 < abs(v_pos_view.y))
+                discard;
+
+            // discard unwritten samples in the first time window
+            if (v_epoch_ts < u_ts-u_ts_range || u_ts < v_epoch_ts)
+                discard;
+
+            // calculate fading factor
+            float fade = 1.;
+            if (ts <= v_pos_raw.x && v_pos_raw.x <= ts+u_ts_fade)
+                fade = fade_sin(ts);
+            if (ts-u_ts_range <= v_pos_raw.x &&
+                    v_pos_raw.x <= ts+u_ts_fade-u_ts_range)
+                fade = fade_sin(ts-u_ts_range);
+
+            // set fragment color
+            //gl_FragColor = vec4(u_color.rgb*fade + u_bg_color*(1-fade), 1.);
+            gl_FragColor = u_color;
+            gl_FragColor.a *= fade;
+            //gl_FragColor.r += ($rand(v_pos_raw+1)-.5)/255;
+            //gl_FragColor.g += ($rand(v_pos_raw+2)-.5)/255;
+            //gl_FragColor.b += ($rand(v_pos_raw+3)-.5)/255;
+            gl_FragColor.a += ($rand(v_pos_raw+4)-.5)/255;
+        }
         '''
 
-        # allow childs to mix with other classes
-        super().__init__()
+    def __init__(self, figure, untPos=(0,0), untSize=(1,1), name=None,
+            color=(0,1,0,.6), **kwargs):
 
-        if not isinstance(canvas, Canvas):
-            raise TypeError('`canvas` should be instance of Canvas')
+        if not isinstance(figure, Scope):
+            raise TypeError('`figure` should be an instance of Scope')
 
-        self._canvas      = canvas
-        self._untPos      = np.array(untPos)
-        self._untSize     = np.array(untSize)
-        self._pxlAxesSize = np.array(pxlAxesSize)
-        self._bgColor     = bgColor
-        self._fgColor     = fgColor
+        if name is not None and not isinstance(name, str):
+            raise TypeError('`names should be None or a string`')
 
-        self._plots       = []
-        self._zoom        = np.array([1, 1])
-        self._pan         = np.array([0, 0])
+        self._figure  = figure
+        self._canvas  = figure._canvas
+        self._untPos  = untPos
+        self._untSize = untSize
+        self._color   = color
+        self._name    = name
+        self._lock    = threading.Lock()
+        self._cache   = 100*8    # cache 100 epochs
+        self._pointer = 0
+        self._partial = None
+        self._index   = np.arange(self._cache, dtype=np.float32)
+        self._data    = np.zeros (self._cache, dtype=np.float32)-1
 
-        self._transformView = vp.visuals.shaders.Function('''
-            vec2 transform_view(vec2 pos) {
-                return $transform(pos, $zoom, $pan);
-            }''')
-        self._transformView['transform'] = _glslTransform
-        self._transformView['zoom'] = self._zoom
-        self._transformView['pan' ] = self._pan
+        self._program = vp.visuals.shaders.ModularProgram(
+            self._vertShaderSource, self._fragShaderSource)
 
-        self._transformFigure = vp.visuals.shaders.Function('''
-            vec2 transform_figure(vec2 pos) {
-                return $transform(pos,
-                    $view_size / $figure_size,
-                    ($axes_size.xy - $axes_size.wz) / $figure_size
-                    * vec2(1,-1));
-            }''')
-        self._transformFigure['transform'] = _glslTransform
-        self._transformFigure['axes_size'] = self._pxlAxesSize
+        self._program.vert['transform_view'  ] = self._figure._transformView
+        self._program.vert['transform_figure'] = self._figure._transformFigure
+        self._program.vert['transform_canvas'] = self._figure._transformCanvas
+        self._program.vert['transform'       ] = _glslTransform
+        self._program.frag['rand'            ] = _glslRand
 
-        self._transformCanvas = vp.visuals.shaders.Function('''
-            vec2 transform_canvas(vec2 pos) {
-                return $transform(pos,
-                    $figure_size / $canvas_size,
-                    (($figure_pos + $figure_size/2) * 2 / $canvas_size - 1)
-                    * vec2(1,-1));
-            }''')
-        self._transformCanvas['transform'] = _glslTransform
+        self._program     ['u_plot_pos'      ] = self._untPos
+        self._program     ['u_plot_size'     ] = self._untSize
+        # self._program     ['u_bg_color'      ] = self._figure.bgColor
+        self._program     ['u_color'         ] = self._color
+        self._program     ['u_ts'            ] = 0
+        self._program     ['u_ts_range'      ] = self._figure.tsRange
+        self._program     ['u_ts_fade'       ] = self._figure.tsFade
 
-        self._border = vp.visuals._BorderVisual(pos=(0,0), halfdim=(0,0),
-            border_width=borderWidth, border_color=self.fgColor)
-        # self._line = vp.visuals.LineVisual(np.array([[0, 0], [500,500]]))
+        self._program     ['a_index'         ] = self._index
+        self._program     ['a_data'          ] = self._data
+        self._program     ['a_data2'         ] = self._data.reshape(
+                                                (-1,2))[:,::-1].ravel()
 
-        self._visuals = vp.visuals.CompoundVisual(
-            [
-            self._border,
-            # self._line,
-            ])
-
-        self.canvasResized()
-
-        canvas._figures += [self]
-
-    def _pxl2nrmView(self, pxlDelta):
-        # translate a delta (dx, dy) from pixels to normalized in view space
-        # mainly used for panning
-        return pxlDelta * 2 / self._pxlViewSize * [1, -1]
-
-    def canvasResized(self):
-        pxlCanvasSize = np.array(self._canvas.size)
-        self._pxlPos  = self._untPos * pxlCanvasSize
-        self._pxlSize = self._untSize * pxlCanvasSize
-        self._pxlViewCenter = self._pxlPos + (self._pxlSize
-            + self._pxlAxesSize[0:2] - self._pxlAxesSize[2:4])/2
-        self._pxlViewSize   = (self._pxlSize - self._pxlAxesSize[0:2] -
-            self._pxlAxesSize[2:4])
-
-        self._visuals.transforms.configure(canvas=self._canvas,
-            viewport=self._canvas.viewport)
-        # self._line.transforms.configure(canvas=self, viewport=viewport)
-        self._border.pos     = self._pxlViewCenter
-        self._border.halfdim = self._pxlViewSize/2
-
-        self._transformFigure['view_size'  ] = self._pxlViewSize
-        self._transformFigure['figure_size'] = self._pxlSize
-
-        self._transformCanvas['figure_pos' ] = self._pxlPos
-        self._transformCanvas['figure_size'] = self._pxlSize
-        self._transformCanvas['canvas_size'] = pxlCanvasSize
-
-        for plot in self._plots:
-            plot.canvasResized()
-
-    def canvasMouseWheel(self, event):
-        if not self.isInside(event.pos): return
-
-        scale = event.delta[0] if event.delta[0] else event.delta[1]
-        scale = math.exp(scale * .15)
-        if 'Control' in event.modifiers:    # both x and y zoom
-            scale = np.array([scale, scale])
-        elif 'Shift' in event.modifiers:
-            scale = np.array([scale, 1])    # only x zoom
-        elif 'Alt' in event.modifiers:
-            scale = np.array([1, scale])    # only y zoom
+        if name is None:
+            self._text = None
         else:
-            return                          # no zoom
+            self._text = vp.visuals.TextVisual(name, bold=True, font_size=10,
+                rotation=0, color=self._color) #self._figure.fgColor)
+            self._text.anchors = ('right', 'center')
 
-        zoom = self.zoom
-        self.zoom = zoom * scale
-        scale = self.zoom / zoom
-        delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
-        self.pan = delta * (1 - scale) + self.pan * scale
+        self._updateText()
 
-    def canvasMousePress(self, event):
-        if not self.isInside(event.pos): return
+        figure._plots += [self]
 
-        if (event.button == 1 and 'Control' in event.modifiers):
-            # start pan
-            event.figure = self
-            event.pan    = self.pan
-
-    def canvasMouseMove(self, event):
-        if (event.press_event and hasattr(event.press_event, 'figure')
-                and event.press_event.figure == self
-                and event.press_event.button == 1
-                and 'Control' in event.press_event.modifiers):
-            # pan
-            delta = self._pxl2nrmView(event.pos - event.press_event.pos)
-            self.pan = event.press_event.pan + delta
-
-    def canvasMouseRelease(self, event):
-        if (event.press_event and hasattr(event.press_event, 'figure')
-                and event.press_event.figure == self
-                and event.press_event.button == 1
-                and 'Control' in event.press_event.modifiers):
-            # stop pan
-            delta = self._pxl2nrmView(event.pos-event.press_event.pos)
-            self.pan = event.press_event.pan + delta
-
-    def canvasKeyRelease(self, event):
-        if 'Control' in event.modifiers and event.key == '0':
-            self.zoom = [1, 1]
-            self.pan  = [0, 0]
-
-    def isInside(self, pxl):
-        return ((self._pxlPos < pxl) & (pxl < self._pxlPos+self._pxlSize)).all()
-
-    def draw(self):
-        for plot in self._plots:
-            plot.draw()
-        self._visuals.draw()
-
-
-class Scope(Figure, pipeline.Sampled):
-    @property
-    def ns(self):
-        return self._ns
-
-    @property
-    def ts(self):
-        if self._fs is None:
-            # node not configured yet
-            return 0
-        elif self._ns == 0:
-            return 0
-        else:
-            return (self._ns - 1) / self._fs
-
-    @property
-    def tsRange(self):
-        return self._tsRange
-
-    @tsRange.setter
-    def tsRange(self, tsRange):
-        raise NotImplementedError()
-        # self._tsRange = tsRange
-
-    @property
-    def tsFade(self):
-        return self._tsFade
-
-    def __init__(self, tsRange=10, tsFade=5, **kwargs):
         super().__init__(**kwargs)
 
-        self._ns      = 0
-        self._tsRange = tsRange
-        self._tsFade  = tsFade
+    def _updateText(self):
+        if not self._text: return
 
-    def _configured(self, params):
-        super()._configured(params)
+        fig = self._figure
 
-        # inform plots of change in fs
-        for plot in self._plots:
-            if hasattr(plot, 'fsChanged'):
-                plot.fsChanged()
+        x = fig._pxlPos[0] + fig._pxlAxesSize[0] - 5
+        y = (fig._pxlViewSize[1] * (self._untSize[1]/2
+            - .5 + self._untPos[1]) * fig._zoom[1]
+            - fig._pan[1]/2 * fig._pxlViewSize[1] + fig._pxlViewCenter[1])
+        self._text.pos = (x, y)
+        self._text.visible = (fig._pxlAxesSize[1] < y - fig._pxlPos[1]
+            < fig._pxlAxesSize[3] + fig._pxlViewSize[1])
+
+    def canvasResized(self):
+        if self._text:
+            self._text.transforms.configure(canvas=self._canvas,
+                viewport=self._canvas.viewport)
+
+        self._updateText()
+
+    def figureZoomed(self):
+        self._updateText()
+
+    def figurePanned(self):
+        self._updateText()
+
+    def fsChanged(self):
+        self._program['u_fs'] = self._figure._fs
+
+    def tsChanged(self):
+        self._program['u_ts'] = self._figure.ts
+
+    def draw(self):
+        with self._lock:
+            self._program.draw('triangle_strip')
+
+        self._text.draw()
 
     def write(self, data, source=None):
         super().write(data, source)
 
-        # increment total number of samples
-        self._ns += data.shape[1]
+        if not isinstance(data, np.ndarray): data = np.array(data)
+        if data.ndim == 0: data = data[np.newaxis]
+        if data.ndim != 1: raise ValueError('`data` should be 1D')
 
-        # inform plots of change in ns/ts
-        for plot in self._plots:
-            if hasattr(plot, 'tsChanged'):
-                plot.tsChanged()
+        # when last added epoch has been partial, complete the epoch by adding
+        # its start timestamp to the beginning of current data
+        if self._partial is not None:
+            data = np.insert(data, 0, self._partial)
+            self._partial = None
 
+        # when last epoch in the current data is partial, save its start
+        # timestamp for the next write operation (see above)
+        if len(data)%2 != 0:
+            self._partial = data[-1]
+            data = np.append(data, -1)
 
-class Canvas(vp.app.Canvas):
-    @property
-    def bgColor(self):
-        return self._bgColor
+        # repeat each timestamp 4 times, 2 for top and bottom vertex of
+        # the epoch rectangle and 2 for ghosting and screen wrapping
+        data    = data.reshape((-1,2)).repeat(4,axis=0).ravel()
+        # write data to (circular) buffer
+        window  = np.arange(self._pointer, self._pointer+len(data))
+        window %= self._cache
+        self._data[window] = data
 
-    @property
-    def fgColor(self):
-        return self._fgColor
+        if self._partial is None:
+            self._pointer += len(data)
+        else:
+            self._pointer += len(data) - 8
 
-    @property
-    def viewport(self):
-        return (0, 0, *self.physical_size)
-
-    def __init__(self, bgColor=(1,1,1), fgColor=(.2,.2,.2)):
-
-        super().__init__(vsync=True, config=dict(samples=4))
-
-        self._bgColor   = bgColor
-        self._fgColor   = fgColor
-        self._figures   = []
-
-        vp.gloo.set_state(clear_color=bgColor, blend=True, depth_test=False)
-
-        self._fpsText = vp.visuals.TextVisual('0.0', bold=True, color=fgColor,
-            pos=(1,1), font_size=8)
-        self._fpsText.anchors = ('left', 'top')
-        self._mouseText = vp.visuals.TextVisual('', bold=True, color=fgColor,
-            pos=(30,1), font_size=8)
-        self._mouseText.anchors = ('left', 'top')
-
-        self._visuals = vp.visuals.CompoundVisual(
-            [self._fpsText,
-            # self._mouseText,
-            ])
-
-        self._updateLast  = None
-        self._updateTimes = []    # keep last update times for measuring FPS
-        self._startTime   = dt.datetime.now()
-        self._timer       = vp.app.Timer('auto', connect=self.on_timer)
-
-        self._timer.start()
-
-    def on_resize(self, event):
-        self.context.set_viewport(*self.viewport)
-        self._visuals.transforms.configure(canvas=self, viewport=self.viewport)
-
-        for figure in self._figures:
-            figure.canvasResized()
-
-    def on_mouse_wheel(self, event):
-        for figure in self._figures:
-            figure.canvasMouseWheel(event)
-
-    def on_mouse_press(self, event):
-        for figure in self._figures:
-            figure.canvasMousePress(event)
-
-    def on_mouse_move(self, event):
-        self._mouseText.text = str(event.pos)
-        for figure in self._figures:
-            figure.canvasMouseMove(event)
-
-    def on_mouse_release(self, event):
-        for figure in self._figures:
-            figure.canvasMouseRelease(event)
-
-    def on_key_release(self, event):
-        for figure in self._figures:
-            figure.canvasKeyRelease(event)
-
-        if event.key == 'space' and hasattr(self, 'spacePressed'):
-            self.spacePressed()
-
-        # elif 'Control' in event.modifiers and event.key == 'left':
-        #     if self.pan_view(self._viewSize/10*[1,0]):
-        #         self.update()
-        # elif 'Control' in event.modifiers and event.key == 'right':
-        #     if self.pan_view(self._viewSize/10*[-1,0]):
-        #         self.update()
-        # elif 'Control' in event.modifiers and event.key == 'up':
-        #     if self.pan_view(self._viewSize/10*[0,1]):
-        #         self.update()
-        # elif 'Control' in event.modifiers and event.key == 'down':
-        #     if self.pan_view(self._viewSize/10*[0,-1]):
-        #         self.update()
-
-    def on_timer(self, event):
-        self.update()
-
-    def on_draw(self, event):
-        if self._updateLast is not None:
-            updateTime = (dt.datetime.now() -
-                self._updateLast).total_seconds()
-            self._updateTimes.append(updateTime)
-            if len(self._updateTimes)>60:
-                self._updateTimes.pop(0)
-            updateMean = np.mean(self._updateTimes)
-            fps = 1/updateMean if updateMean else 0
-            self._fps = fps
-            self._fpsText.text = '%.1f' % fps
-        self._updateLast = dt.datetime.now()
-
-        vp.gloo.clear()
-        # glEnable(GL_LINE_STIPPLE)
-        # glLineStipple(50, 0b1010101010101010)
-        # self._line.draw()
-        # glDisable(GL_LINE_STIPPLE)
-        # glLineWidth(1)
-        for figure in self._figures:
-            figure.draw()
-        self._visuals.draw()
+        with self._lock:
+            self._program['a_data' ] = self._data
+            # swap epoch starts and stops
+            self._program['a_data2'] = self._data.reshape(
+                (-1,2))[:,::-1].ravel()
 
 
 class MainWindow(QtWidgets.QWidget):
