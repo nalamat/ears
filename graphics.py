@@ -126,8 +126,8 @@ class Container:
                 getattr(item, func)(*args, **kwargs)
 
     def addItem(self, item):
-        # if not isinstance(item, Figure):
-        #     raise TypeError('`item` should be a Figure')
+        # if not isinstance(item, Container):
+        #     raise TypeError('`item` should be a Container')
 
         self._items += [item]
 
@@ -335,6 +335,12 @@ class Figure(Container):
         # mainly used for panning
         return pxlDelta * 2 / self._pxlViewSize * [1, -1]
 
+    def addItem(self, item):
+        if not isinstance(item, Plot):
+            raise TypeError('`item` should be a Plot')
+
+        super().addItem(item)
+
     def on_resize(self, event):
         parent = self._parent
 
@@ -461,11 +467,11 @@ class Scope(Figure, pipeline.Sampled):
             tsFade (float): Rage of fading the previous window data.
         '''
 
-        super().__init__(**kwargs)
-
         self._ns      = 0
         self._tsRange = tsRange
         self._tsFade  = tsFade
+
+        super().__init__(**kwargs)
 
     def _configured(self, params):
         super()._configured(params)
@@ -483,7 +489,51 @@ class Scope(Figure, pipeline.Sampled):
         self._callItems('tsChanged')
 
 
-class AnalogPlot(pipeline.Sampled):
+class Plot:
+    def __init__(self, figure=None, untPos=(0,0), untSize=(1,1), **kwargs):
+        '''
+        Args:
+            figure:
+            untPos: Position of the plot in unit scene space.
+            untSize: Size of the plot in unit scene space.
+        '''
+
+        if not isinstance(figure, Figure):
+            raise TypeError('`figure` should be an instance of Figure')
+
+        self._figure  = figure
+        self._canvas  = figure.canvas
+        self._untPos  = untPos
+        self._untSize = untSize
+
+        self._lock    = threading.Lock()
+        self._program = vp.visuals.shaders.ModularProgram(
+            self._vertShaderSource, self._fragShaderSource)
+
+        # init gpu program
+        self._program.vert['transform_view'  ] = figure._transformView
+        self._program.vert['transform_figure'] = figure._transformFigure
+        self._program.vert['transform_canvas'] = figure._transformCanvas
+        self._program.vert['transform'       ] = _glslTransform
+
+        self._program     ['u_bg_color'      ] = self._figure.bgColor
+        self._program     ['u_plot_pos'      ] = self._untPos
+        self._program     ['u_plot_size'     ] = self._untSize
+
+        figure.addItem(self)
+
+        super().__init__(**kwargs)
+
+    def draw(self, mode):
+        if self._program is None: return
+
+        # glEnable(GL_LINE_SMOOTH)
+        with self._lock:
+            self._program.draw(mode)
+        # glDisable(GL_LINE_SMOOTH)
+
+
+class AnalogPlot(Plot, pipeline.Sampled):
     _vertShaderSource = '''
         uniform   vec2  u_plot_pos;       // unit in scene space
         uniform   vec2  u_plot_size;      // unit in scene space
@@ -610,37 +660,25 @@ class AnalogPlot(pipeline.Sampled):
         }
         '''
 
-    def __init__(self, figure, untPos=(0,0), untSize=(1,1), names=None,
-            colors=None, **kwargs):
+    def __init__(self, names=None, colors=None, **kwargs):
         '''
         Args:
-            figure:
-            untPos: Position of the plot in unit scene space.
-            untSize: Size of the plot in unit scene space.
             names:
+            colors:
         '''
 
-        if not isinstance(figure, Scope):
+        if not isinstance(kwargs.get('figure',None), Scope):
             raise TypeError('`figure` should be an instance of Scope')
 
         if (names is not None and not misc.iterable(names)
                 and not callable(names)):
             raise TypeError('`names` should be None, iterable or callable')
 
-        self._figure  = figure
-        self._canvas  = figure.canvas
-        self._untPos  = untPos
-        self._untSize = untSize
-        self._names   = names
-        self._colors  = colors
-
-        self._lock    = threading.Lock()
-        self._program = None
-        self._texts   = []
-
-        figure.addItem(self)
-
         super().__init__(**kwargs)
+
+        self._names  = names
+        self._colors = colors
+        self._texts  = []
 
     def _configured(self, params):
         super()._configured(params)
@@ -666,20 +704,8 @@ class AnalogPlot(pipeline.Sampled):
         self._indices = [None]*self._zooms
         self._buffers = [None]*self._zooms
 
-        # init gpu program
-        self._program    = vp.visuals.shaders.ModularProgram(
-            self._vertShaderSource, self._fragShaderSource)
-
-        self._program.vert['transform_view'  ] = self._figure._transformView
-        self._program.vert['transform_figure'] = self._figure._transformFigure
-        self._program.vert['transform_canvas'] = self._figure._transformCanvas
-        self._program.vert['transform'       ] = _glslTransform
         self._program.vert['channel_count'   ] = str(self._channels)
         self._program.frag['channel_count'   ] = str(self._channels)
-
-        self._program     ['u_bg_color'      ] = self._figure.bgColor
-        self._program     ['u_plot_pos'      ] = self._untPos
-        self._program     ['u_plot_size'     ] = self._untSize
         for i in range(self._channels):
             self._program ['u_colors[%d]' % i] = self._colors[i]
 
@@ -704,10 +730,10 @@ class AnalogPlot(pipeline.Sampled):
             fs       = self._fs / ds
             nsRange  = int(self._figure.tsRange*fs)
 
-            self._fss           [i] = fs
-            self._indices       [i] = np.arange(self._channels*nsRange).reshape(
+            self._fss    [i] = fs
+            self._indices[i] = np.arange(self._channels*nsRange).reshape(
                 (self._channels,-1))
-            self._buffers       [i] = pipeline.CircularBuffer(size=nsRange)
+            self._buffers[i] = pipeline.CircularBuffer(size=nsRange)
 
             # internal pipeline
             self >> pipeline.DownsampleMinMax(ds=ds) >> self._buffers[i]
@@ -743,8 +769,6 @@ class AnalogPlot(pipeline.Sampled):
                 < fig._pxlMargins[3] + fig._pxlViewSize[1])
 
     def on_resize(self, event):
-        if self._program is None: return
-
         for text in self._texts:
             text.transforms.configure(canvas=self._canvas,
                 viewport=self._canvas.viewport)
@@ -771,13 +795,7 @@ class AnalogPlot(pipeline.Sampled):
         self._updateTexts()
 
     def draw(self):
-        if self._program is None: return
-
-        # glEnable(GL_LINE_SMOOTH)
-        with self._lock:
-            self._program.draw('line_strip')
-        # glDisable(GL_LINE_SMOOTH)
-
+        super().draw('line_strip')
         for text in self._texts:
             text.draw()
 
@@ -789,93 +807,7 @@ class AnalogPlot(pipeline.Sampled):
             self._program['a_data'] = buffer.data.astype(np.float32)
 
 
-class Generator(pipeline.Sampled):
-    @property
-    def paused(self):
-        return not self._continueEvent.isSet()
-
-    def __init__(self, fs, channels, **kwargs):
-        self._ns = 0
-        self._thread = threading.Thread(target=self._loop)
-        self._thread.daemon = True
-        self._continueEvent = threading.Event()
-
-        super().__init__(fs=fs, channels=channels, **kwargs)
-
-    def _addSources(self, sources):
-        raise RuntimeError('Cannot add source for a Generator')
-
-    def _loop(self):
-        start = dt.datetime.now()
-        pauseTS = 0
-
-        while True:
-            time.sleep(.01)
-            if not self._continueEvent.isSet():
-                pause = dt.datetime.now()
-                self._continueEvent.wait()
-                pauseTS += (dt.datetime.now()-pause).total_seconds()
-            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
-            ns = int(ts * self._fs)
-            data = self._gen(self._ns, ns)
-            super().write(data, self)
-            self._ns = ns
-
-    def _gen(self, ns1, ns2):
-        raise NotImplementedError()
-
-    def start(self):
-        self._continueEvent.set()
-        if not self._thread.isAlive():
-            self._thread.start()
-
-    def pause(self):
-        self._continueEvent.clear()
-
-    def write(self, data, source=None):
-        raise RuntimeError('Cannot write to a Generator')
-
-
-class SineGenerator(Generator):
-    def __init__(self, fs, channels, noisy=True, **kwargs):
-        # randomized channel parameters
-        self._phases = np.random.uniform(0  , np.pi, (channels,1))
-        self._freqs  = np.random.uniform(1  , 5    , (channels,1))
-        self._amps   = np.random.uniform(.05, .5   , (channels,1))
-        self._amps2  = np.random.uniform(.05, .2   , (channels,1))
-        if not noisy:
-            self._amps2 *= 0
-
-        super().__init__(fs=fs, channels=channels, **kwargs)
-
-    def _gen(self, ns1, ns2):
-        # generate data as a (channels, ns) array.
-        return (self._amps * np.sin(2 * np.pi * self._freqs
-            * np.arange(ns1, ns2) / self._fs + self._phases)
-            + self._amps2 * np.random.randn(self._channels, ns2-ns1))
-
-
-class SpikeGenerator(Generator):
-    def _gen(self, ns1, ns2):
-        data = .1*np.random.randn(self._channels, ns2-ns1)
-        dt = (ns2-ns1)/self._fs
-
-        counts = np.random.uniform(0, dt*1000/25, self._channels)
-        counts = np.round(counts).astype(np.int)
-
-        for channel in range(self._channels):
-            for i in range(counts[channel]):
-                # random spike length, amplitude, and location
-                length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
-                amp    = np.random.uniform(.3, .7)
-                at     = int(np.random.uniform(0, data.shape[1]-length))
-                spike  = -amp*sp.signal.gaussian(length, length/7)
-                data[channel, at:at+length] += spike
-
-        return data
-
-
-class EpochPlot(pipeline.Node):
+class EpochPlot(Plot, pipeline.Node):
     _vertShaderSource = '''
         uniform   vec2  u_plot_pos;
         uniform   vec2  u_plot_size;
@@ -1015,48 +947,39 @@ class EpochPlot(pipeline.Node):
         }
         '''
 
-    def __init__(self, figure, untPos=(0,0), untSize=(1,1), name=None,
-            color=(0,1,0,.6), **kwargs):
+    def __init__(self, name=None, color=(0,1,0,.6), **kwargs):
+        '''
+        Args:
+            name:
+            color:
+        '''
 
-        if not isinstance(figure, Scope):
+        if not isinstance(kwargs.get('figure',None), Scope):
             raise TypeError('`figure` should be an instance of Scope')
 
         if name is not None and not isinstance(name, str):
             raise TypeError('`names should be None or a string`')
 
-        self._figure  = figure
-        self._canvas  = figure.canvas
-        self._untPos  = untPos
-        self._untSize = untSize
+        super().__init__(**kwargs)
+
         self._color   = color
         self._name    = name
-        self._lock    = threading.Lock()
         self._cache   = 100*8    # cache 100 epochs
         self._pointer = 0
         self._partial = None
         self._index   = np.arange(self._cache, dtype=np.float32)
         self._data    = np.zeros (self._cache, dtype=np.float32)-1
 
-        self._program = vp.visuals.shaders.ModularProgram(
-            self._vertShaderSource, self._fragShaderSource)
+        self._program.frag['rand'      ] = _glslRand
 
-        self._program.vert['transform_view'  ] = self._figure._transformView
-        self._program.vert['transform_figure'] = self._figure._transformFigure
-        self._program.vert['transform_canvas'] = self._figure._transformCanvas
-        self._program.vert['transform'       ] = _glslTransform
-        self._program.frag['rand'            ] = _glslRand
+        self._program     ['u_color'   ] = self._color
+        self._program     ['u_ts'      ] = 0
+        self._program     ['u_ts_range'] = self._figure.tsRange
+        self._program     ['u_ts_fade' ] = self._figure.tsFade
 
-        self._program     ['u_plot_pos'      ] = self._untPos
-        self._program     ['u_plot_size'     ] = self._untSize
-        # self._program     ['u_bg_color'      ] = self._figure.bgColor
-        self._program     ['u_color'         ] = self._color
-        self._program     ['u_ts'            ] = 0
-        self._program     ['u_ts_range'      ] = self._figure.tsRange
-        self._program     ['u_ts_fade'       ] = self._figure.tsFade
-
-        self._program     ['a_index'         ] = self._index
-        self._program     ['a_data'          ] = self._data
-        self._program     ['a_data2'         ] = self._data.reshape(
+        self._program     ['a_index'   ] = self._index
+        self._program     ['a_data'    ] = self._data
+        self._program     ['a_data2'   ] = self._data.reshape(
                                                 (-1,2))[:,::-1].ravel()
 
         if name is None:
@@ -1067,10 +990,6 @@ class EpochPlot(pipeline.Node):
             self._text.anchors = ('right', 'center')
 
         # self._updateText()
-
-        figure.addItem(self)
-
-        super().__init__(**kwargs)
 
     def _updateText(self):
         if not self._text: return
@@ -1105,9 +1024,7 @@ class EpochPlot(pipeline.Node):
         self._program['u_ts'] = self._figure.ts
 
     def draw(self):
-        with self._lock:
-            self._program.draw('triangle_strip')
-
+        super().draw('triangle_strip')
         self._text.draw()
 
     def write(self, data, source=None):
@@ -1149,6 +1066,115 @@ class EpochPlot(pipeline.Node):
                 (-1,2))[:,::-1].ravel()
 
 
+class Generator(pipeline.Sampled):
+    @property
+    def paused(self):
+        return not self._continueEvent.isSet()
+
+    def __init__(self, fs, channels, **kwargs):
+        self._ns = 0
+        self._thread = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._continueEvent = threading.Event()
+
+        super().__init__(fs=fs, channels=channels, **kwargs)
+
+    def _addSources(self, sources):
+        raise RuntimeError('Cannot add source for a Generator')
+
+    def _loop(self):
+        start = dt.datetime.now()
+        pauseTS = 0
+
+        while True:
+            time.sleep(.01)
+            if not self._continueEvent.isSet():
+                pause = dt.datetime.now()
+                self._continueEvent.wait()
+                pauseTS += (dt.datetime.now()-pause).total_seconds()
+            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
+            ns = int(ts * self._fs)
+            data = self._gen(self._ns, ns)
+            super().write(data, self)
+            self._ns = ns
+
+    def _gen(self, ns1, ns2):
+        raise NotImplementedError()
+
+    def start(self):
+        self._continueEvent.set()
+        if not self._thread.isAlive():
+            self._thread.start()
+
+    def pause(self):
+        self._continueEvent.clear()
+
+    def write(self, data, source=None):
+        raise RuntimeError('Cannot write to a Generator')
+
+
+class SineGenerator(Generator):
+    def __init__(self, fs, channels, noisy=True, **kwargs):
+        # randomized channel parameters
+        self._phases = np.random.uniform(0  , np.pi, (channels,1))
+        self._freqs  = np.random.uniform(1  , 5    , (channels,1))
+        self._amps   = np.random.uniform(.05, .5   , (channels,1))
+        self._amps2  = np.random.uniform(.05, .2   , (channels,1))
+        if not noisy:
+            self._amps2 *= 0
+
+        super().__init__(fs=fs, channels=channels, **kwargs)
+
+    def _gen(self, ns1, ns2):
+        # generate data as a (channels, ns) array.
+        return (self._amps * np.sin(2 * np.pi * self._freqs
+            * np.arange(ns1, ns2) / self._fs + self._phases)
+            + self._amps2 * np.random.randn(self._channels, ns2-ns1))
+
+
+class SpikeGenerator(Generator):
+    def _gen(self, ns1, ns2):
+        data = .1*np.random.randn(self._channels, ns2-ns1)
+        dt = (ns2-ns1)/self._fs
+
+        counts = np.random.uniform(0, dt*1000/25, self._channels)
+        counts = np.round(counts).astype(np.int)
+
+        for channel in range(self._channels):
+            for i in range(counts[channel]):
+                # random spike length, amplitude, and location
+                length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
+                amp    = np.random.uniform(.3, .7)
+                at     = int(np.random.uniform(0, data.shape[1]-length))
+                spike  = -amp*sp.signal.gaussian(length, length/7)
+                data[channel, at:at+length] += spike
+
+        return data
+
+
+class SpikeDetector(pipeline.Sampled):
+    def write(self, data, source=None):
+        data = self._verifyData(data)
+
+        length = 1e-3*self._fs
+
+        if data.shape[1] > length:
+            data = data[:,:length]
+
+        super().write(data, source)
+
+
+class SpikePlot(Plot, pipeline.Sampled):
+    def __init__(self, color=None, **kwargs):
+
+        self._color = color
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params):
+        super()._configured(params)
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -1156,11 +1182,11 @@ class MainWindow(QtWidgets.QWidget):
         self.canvas     = Canvas()
         self.scope      = Scope(parent=self.canvas, untPos=(0,0),
             untSize=(.6,1), pxlMargins=(60,15,15,15))
-        self.analogPlot = AnalogPlot(self.scope, untPos=(0,0),
+        self.analogPlot = AnalogPlot(figure=self.scope, untPos=(0,0),
             untSize=(1,.9), names=str)
-        self.targetPlot = EpochPlot(self.scope, untPos=(0,.9),
+        self.targetPlot = EpochPlot(figure=self.scope, untPos=(0,.9),
             untSize=(1,.05), name='Target', color=(0,1,0,.7))
-        self.pumpPlot   = EpochPlot(self.scope, untPos=(0,.95),
+        self.pumpPlot   = EpochPlot(figure=self.scope, untPos=(0,.95),
             untSize=(1,.05), name='Pump', color=(0,0,1,.7))
         # self.targetPlot.write([2,4])
 
