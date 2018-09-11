@@ -188,8 +188,8 @@ class AnalogStorage(pipeline.Sampled):
 
         super().__init__(**kwargs)
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         if contains(self._hdf5Node):
             raise NameError('HDF5 node %s already exists' % self._hdf5Node)
@@ -198,12 +198,12 @@ class AnalogStorage(pipeline.Sampled):
             expectedrows=self._fs*60*30)    # 30 minutes
         setNodeAttr(self._hdf5Node, 'fs', self._fs)
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
 
         appendArray(self._hdf5Node, data.transpose())
 
-        super().write(data, source)
+        return data
 
 
 if __name__ == '__main__':

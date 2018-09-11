@@ -867,22 +867,6 @@ class AnalogPlot(pipeline.Sampled):
         return self._plotWidget
 
     @property
-    def fs(self):
-        '''Sampling frequency'''
-        return self._fs
-
-    @property
-    def ns(self):
-        '''Total number of samples (per line) added to channel'''
-        # return self._ns
-        return self._buffer1.nsWritten
-
-    @property
-    def ts(self):
-        '''Last timestamp in seconds'''
-        return self.ns/self._fs
-
-    @property
     def lineCount(self):
         return self._lineCount
 
@@ -908,8 +892,8 @@ class AnalogPlot(pipeline.Sampled):
 
         super().__init__(**kwargs)
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._lineCount = self._channels
 
@@ -930,20 +914,19 @@ class AnalogPlot(pipeline.Sampled):
                 self._curves[i][j] = self.plotWidget.plot([], [],
                     pen=self._color[i % len(self._color)])
 
-    def write(self, data, source=None):
+    def _written(self, data, source):
         '''
         Args:
             data (numpy.array): 1D for single line or 2D for multiple lines
                 with the following format: lines x samples
         '''
-        data = self._verifyData(data)
 
         # keep a local copy of data in a circular buffer
         # for online processing and fast plotting
         with self._buffer1:
             self._buffer1.write(data)
 
-        super().write(data, source)
+        super()._written(data, source)
 
     def update(self, ts=None, tsMin=None, nextWindow=False):
         if not self._buffer1.updated: return

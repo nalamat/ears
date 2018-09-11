@@ -167,15 +167,8 @@ class Node(Route):
         # allow child classes to verify and change params
         self._configuring(params, sinkParams)
 
-        # save params and sinkParams
-        self._params     = params
-        self._sinkParams = sinkParams
-
-        # pass sinkParams to downstream nodes
-        for sink in self._sinks:
-            sink._config(sinkParams)
-
-        self._configured(params)
+        # allow child classes to mask sink config behavior
+        self._configured(params, sinkParams)
 
     def _configuring(self, params, sinkParams):
         '''Allow child classes to verify or change params before their applied.
@@ -187,26 +180,56 @@ class Node(Route):
         if self._params:
             raise RuntimeError('Node can be configured only once')
 
-    def _configured(self, params):
+    def _configured(self, params, sinkParams):
         '''Allow child classes to act on applied param changes.
 
         Mostly needed for initializing local state based on params.
-        When overriding, best practice is to call super function first.
+        When overriding, best practice is to call super function first unless
+        behavior masking is intended, e.g. config each sink differently.
         '''
 
-        pass
+        # save params and sinkParams
+        self._params     = params
+        self._sinkParams = sinkParams
 
-    def write(self, data, source=None):
-        '''Write a chunk of data to the node and send downstream to sinks.
+        # pass sinkParams to downstream nodes
+        for sink in self._sinks:
+            sink._config(sinkParams)
 
-        Child classes can override to implement data processing. When
-        overriding, call super function at the end to pass data to sinks, unless
-        behavior masking is intended, e.g. to send different data to each sink.
+    def _writing(self, data, source):
+        '''Called when writing new data to the Node and before passing to sinks.
+
+        Child classes can override to verificy and preprocess data.
+
+        When overriding, best to call super function first.
         '''
 
-        # transparently write data to all sinks
+        return data
+
+    def _written(self, data, source):
+        '''Called after data is verified and prepreprocessed.
+
+        Child classes can override to process data, change how data is passed to
+        sinks or perform post write operations.
+
+        When overriding, call super function at the end to pass data to sinks,
+        unless behavior masking is intended, e.g. to send different data to each
+        sink.
+        '''
+
+        # pass data to downstream sinks
         for sink in self._sinks:
             sink.write(data, self)
+
+    def write(self, data, source=None):
+        '''Write a chunk of data to the node and send downstream to sinks.'''
+
+        # allow child classes to verify and preprocess data
+        data = self._writing(data, source)
+
+        # allow child classes to process data, change how data is passed to
+        # sinks or perform post write operations
+        self._written(data, source)
 
     def wait(self):
         '''Wait for asynchronous sinks in the pipeline to finish processing.
@@ -232,9 +255,9 @@ class DummySink(Node):
 class Print(Node):
     '''Print each given chunk of data.'''
 
-    def write(self, data, source=None):
+    def _written(self, data, source):
         print(data)
-        super().write(data, source)
+        super()._written(data, source)
 
 
 class Func(Node):
@@ -244,14 +267,13 @@ class Func(Node):
         super().__init__(**kwargs)
 
         if not callable(func):
-            raise TypeError('`func` should be callable for % node')
+            raise TypeError('`func` should be callable')
 
         self._func = func
 
-    def write(self, data, source=None):
-        data = self._func(data)
-        super().write(data, source)
-
+    def _written(self, data, source):
+        data =  self._func(data)
+        super()._written(data, source)
 
 class Thread(Node):
     '''Pass data onto sink nodes in a daemon thread.'''
@@ -279,7 +301,7 @@ class Thread(Node):
 
         while True:
             (data, source) = self._queue.get()
-            super().write(data, source)
+            super()._written(data, source)
 
     # def start(self):
     #     if self._thread is None:
@@ -304,10 +326,38 @@ class Thread(Node):
             time.sleep(50e-3)
         super().wait()
 
-    def write(self, data, source=None):
+    def _written(self, data, source):
+        # mask Node behavior
         if not self._thread.isAlive():
             self._thread.start()
         self._queue.put((data, source))
+
+
+class Split(Node):
+    '''Split iterable data into multiple sink nodes.'''
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        # compatibility with Sampled Nodes
+        if 'channels' in sinkParams:
+            # each sink will only receive 1 channel
+            sinkParams['channels'] = 1
+
+    def _written(self, data, source):
+        if not misc.iterable(data):
+            raise TypeError('`data` should be iterable for splitting')
+
+        if len(data) != len(self._sinks):
+            raise ValueError('`data` size should match `sink` count')
+
+        # compatibility with Sampled Nodes
+        if hasattr(self, '_channels') and self._channels != len(self._sinks):
+            raise ValueError('`channels` should match `sink` count')
+
+        # mask Node behavior
+        for sink, channel in zip(self._sinks, data):
+            sink.write(channel, self)
 
 
 class Sampled(Node):
@@ -317,9 +367,29 @@ class Sampled(Node):
     first dimension (number of channels) is constant.
     '''
 
+    @property
+    def fs(self):
+        '''Sampling frequency'''
+        return self._fs
+
+    @property
+    def channels(self):
+        return self._channels
+
+    @property
+    def ns(self):
+        '''Total number of samples (per line) written to Node'''
+        return self._ns
+
+    @property
+    def ts(self):
+        '''Current timestamp in seconds'''
+        return self._ns/self._fs
+
     def __init__(self, **kwargs):
         self._fs       = None
         self._channels = None
+        self._ns       = 0
 
         super().__init__(**kwargs)
 
@@ -329,13 +399,15 @@ class Sampled(Node):
         if 'fs' not in params or 'channels' not in params:
             raise ValueError('Sampled node requires `fs` and `channels`')
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._fs       = params['fs']
         self._channels = params['channels']
 
-    def _verifyData(self, data):
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
+
         if not isinstance(data, np.ndarray): data = np.array(data)
         if data.ndim == 1: data = data[np.newaxis, :]
         if data.ndim != 2: raise ValueError('`data` should be 1D or 2D')
@@ -346,26 +418,36 @@ class Sampled(Node):
         if self._channels != data.shape[0]:
             raise ValueError('`data` channel count does not match `channels`')
 
+        self._ns += data.shape[1]
+
         return data
 
 
-class Split(Sampled):
-    '''Split multichannel data into multiple sink nodes.'''
+class Auxillary(Sampled):
+    def __init__(self, cbConfigured, cbWritten, **kwargs):
+        '''
+        Args:
+            cbConfigured (callable): Callback when node is configured.
+            cbWritten (callable): Callback when data is written to the node.
+        '''
 
-    def _configuring(self, params, sinkParams):
-        super()._configuring(params, sinkParams)
+        if not callable(cbConfigured):
+            raise TypeError('`cbConfigured` should be callable')
+        if not callable(cbWritten):
+            raise TypeError('`cbWritten` should be callable')
 
-        # each sink will only receive 1 channel
-        sinkParams['channels'] = 1
+        self._cbConfigured = cbConfigured
+        self._cbWritten    = cbWritten
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
+        super().__init__(**kwargs)
 
-        if self._channels != len(self._sinks):
-            raise ValueError('`channels` should match `sink` count')
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+        self._cbConfigured()
 
-        for sink, channel in zip(self._sinks, data):
-            sink.write(channel, self)
+    def _written(self, data, source):
+        super()._written(data, source)
+        self._cbWritten()
 
 
 class LFilter(Sampled):
@@ -419,8 +501,8 @@ class LFilter(Sampled):
 
         super().__init__(**kwargs)
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._refresh()
 
@@ -447,9 +529,7 @@ class LFilter(Sampled):
 
         self._ba = ba
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
-
+    def _written(self, data, source):
         if self._ba is not None:
             # initialize filter in steady state
             if self._zi is None:
@@ -461,7 +541,7 @@ class LFilter(Sampled):
             # apply the IIR filter
             data, self._zi = sp.signal.lfilter(*self._ba, data, zi=self._zi)
 
-        super().write(data, source)
+        super()._written(data, source)
 
 
 class Downsample(Sampled):
@@ -480,17 +560,15 @@ class Downsample(Sampled):
 
         sinkParams['fs'] = params['fs'] / self._ds
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
 
     def _downsample(self, data):
         raise NotImplementedError()
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
-
+    def _written(self, data, source):
         # if ds==1, transparently pass data down the pipeline
         if self._ds != 1:
             # TODO: find a better solution than writing to a buffer
@@ -503,7 +581,7 @@ class Downsample(Sampled):
 
             data = self._downsample(data)
 
-        super().write(data, source)
+        super()._written(data, source)
 
 
 class DownsampleAverage(Downsample):
@@ -545,8 +623,8 @@ class DownsampleLTTB(Sampled):
 
         sinkParams['fs'] = self._fsOut
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         if self._fs < self._fsOut:
             raise ValueError('`fsOut` should be >= `fs`')
@@ -565,9 +643,7 @@ class DownsampleLTTB(Sampled):
             self._buffer = misc.CircularBuffer(
                 (self._channels, int(self._fs*10)))
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
-
+    def _written(self, data, source):
         if self._fs != self._fsOut:
             # buffer the input data
             self._buffer.write(data)
@@ -621,7 +697,7 @@ class DownsampleLTTB(Sampled):
             # transparently pass the data down the pipeline
             dataOut = data
 
-        super().write(dataOut, source)
+        super()._written(dataOut, source)
 
 
 class GrandAverage(Sampled):
@@ -650,14 +726,12 @@ class GrandAverage(Sampled):
 
         super().__init__(**kwargs)
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._mask = (True,) * self._channels
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
-
+    def _written(self, data, source):
         data2 = data.copy().astype(np.float64)
         for channel in range(self._channels):
             mask = np.array(self._mask)
@@ -666,7 +740,7 @@ class GrandAverage(Sampled):
             if not mask.any(): continue
             data2[channel,:] -= data[mask,:].mean(axis=0)
 
-        super().write(data2, source)
+        super()._written(data2, source)
 
 
 class CircularBuffer(Sampled):
@@ -685,36 +759,27 @@ class CircularBuffer(Sampled):
         '''Shape of the underlying buffer: channels x circular axis size.'''
         return self._data.shape
 
-    @property
-    def ns(self):
-        '''Number of samples written.'''
-        return self._ns
-
     def __init__(self, size, **kwargs):
         if size < 1:            raise ValueError('`size` should be >= 1')
         if round(size) != size: raise TypeError ('`size` should be an integer')
 
         self._size = size
         self._data = None
-        self._ns   = 0
 
         super().__init__(**kwargs)
 
-    def _configured(self, params):
-        super()._configured(params)
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
 
         self._data = np.zeros((self._channels, self._size))
 
-    def write(self, data, source=None):
-        data = self._verifyData(data)
-
+    def _written(self, data, source):
         n    = data.shape[1]
-        inds = np.arange(self._ns, self._ns + n) % self._size
+        inds = np.arange(self.ns-n, self.ns) % self._size
 
         self._data[:,inds] = data
-        self._ns += n
 
-        super().write(data, source)
+        super()._written(data, source)
 
     def read(self, n=None):
         '''Read the last `n` samples written in the buffer.'''
