@@ -432,7 +432,7 @@ class Figure(Container):
         self._visuals.draw()
 
 
-class Scope(Figure):
+class Scope(Figure, pipeline.Sampled):
     @property
     def tsRange(self):
         return self._tsRange
@@ -457,6 +457,9 @@ class Scope(Figure):
         self._tsFade  = tsFade
 
         super().__init__(**kwargs)
+
+    def _written(self, data, source):
+        super()._written(data, source)
 
 
 class Plot:
@@ -730,6 +733,9 @@ class AnalogPlot(Plot, pipeline.Sampled):
         fig = self._figure
 
         for i in range(self._channels):
+            self._texts[i].transforms.configure(canvas=self._canvas,
+                viewport=self._canvas.viewport)
+
             x = fig._pxlPos[0] + fig._pxlMargins[0] - 5
             y = (fig._pxlViewSize[1] * ((i+.5)/self._channels*self._untSize[1]
                 - .5 + self._untPos[1]) * fig._zoom[1]
@@ -739,10 +745,6 @@ class AnalogPlot(Plot, pipeline.Sampled):
                 < fig._pxlMargins[3] + fig._pxlViewSize[1])
 
     def on_resize(self, event):
-        for text in self._texts:
-            text.transforms.configure(canvas=self._canvas,
-                viewport=self._canvas.viewport)
-
         self._updateTexts()
 
     def zoomed(self):
@@ -765,7 +767,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
         self._updateTexts()
 
     def draw(self):
-        super().draw('line_strip')
+        super().draw('line_strip', smooth=True)
         for text in self._texts:
             text.draw()
 
@@ -970,6 +972,9 @@ class EpochPlot(Plot, pipeline.Node):
     def _updateText(self):
         if not self._text: return
 
+        self._text.transforms.configure(canvas=self._canvas,
+            viewport=self._canvas.viewport)
+
         fig = self._figure
 
         x = fig._pxlPos[0] + fig._pxlMargins[0] - 5
@@ -987,10 +992,6 @@ class EpochPlot(Plot, pipeline.Node):
         self._program['u_ts'] = self._aux.ts
 
     def on_resize(self, event):
-        if self._text:
-            self._text.transforms.configure(canvas=self._canvas,
-                viewport=self._canvas.viewport)
-
         self._updateText()
 
     def zoomed(self):
@@ -1001,7 +1002,8 @@ class EpochPlot(Plot, pipeline.Node):
 
     def draw(self):
         super().draw('triangle_strip')
-        self._text.draw()
+        if self._text:
+            self._text.draw()
 
     def _written(self, data, source):
         if not isinstance(data, np.ndarray): data = np.array(data)
@@ -1042,15 +1044,15 @@ class EpochPlot(Plot, pipeline.Node):
         super()._written(data, source)
 
 
-class SpikePlot(Plot, pipeline.Sampled):
+class SpikePlot(Plot, pipeline.Node):
     _vertShaderSource = '''
         uniform   vec2  u_plot_pos;       // unit in scene space
         uniform   vec2  u_plot_size;      // unit in scene space
         uniform   vec3  u_bg_color;
         uniform   vec3  u_color;
         uniform   int   u_spike_count;
-        uniform   int   u_sample_count;
         uniform   int   u_spike_index;
+        uniform   int   u_spike_length;
 
         attribute float a_index;
         attribute float a_data;
@@ -1066,8 +1068,8 @@ class SpikePlot(Plot, pipeline.Sampled):
         varying   vec3  v_color;
 
         void main() {
-            v_spike_index  = floor(a_index / u_sample_count);
-            v_sample_index = mod(a_index, u_sample_count);
+            v_spike_index  = floor(a_index / u_spike_length);
+            v_sample_index = mod(a_index, u_spike_length);
 
             v_pos_raw      = vec2(v_sample_index, a_data);
 
@@ -1076,7 +1078,7 @@ class SpikePlot(Plot, pipeline.Sampled):
 
             // channel
             v_pos_plot     = $transform(v_pos_raw,
-                2. / (u_sample_count - 1), 1,
+                2. / (u_spike_length - 1), 1,
                 -1, 0);
 
             // scene (all plots, before pan & zoom)
@@ -1103,8 +1105,8 @@ class SpikePlot(Plot, pipeline.Sampled):
         uniform   vec3  u_bg_color;
         uniform   vec3  u_color;
         uniform   int   u_spike_count;
-        uniform   int   u_sample_count;
         uniform   int   u_spike_index;
+        uniform   int   u_spike_length;
 
         varying   float v_spike_index;
         varying   float v_sample_index;
@@ -1147,12 +1149,15 @@ class SpikePlot(Plot, pipeline.Sampled):
     def aux(self):
         return self._aux
 
-    def __init__(self, color=(0,0,0), **kwargs):
+    def __init__(self, name=None, color=(0,0,0), **kwargs):
+        self._fs          = None
+        self._spikeLength = None
+
         super().__init__(**kwargs)
 
+        self._name       = name
         self._color      = color
         self._spikeCount = 10
-        self._tsRange    = 1e-3
         self._spikeIndex = 0
         self._aux        = pipeline.Auxillary(
             self._auxConfigured, self._auxWritten)
@@ -1161,21 +1166,43 @@ class SpikePlot(Plot, pipeline.Sampled):
         self._program['u_spike_count'] = self._spikeCount
         self._program['u_spike_index'] = self._spikeIndex
 
+        if name is None:
+            self._text = None
+        else:
+            self._text = vp.visuals.TextVisual(name, bold=True, font_size=14,
+                color=color, anchor_x='left', anchor_y='top')
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        if 'spikeLength' not in params:
+            raise ValueError('SpikePlot requires `spikeLength`')
+
+        if 'channels' in params and params['channels'] != 1:
+            raise ValueError('SpikePlot can only plot a single `channel`')
+
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
 
-        if self._channels != 1:
-            raise ValueError('SpikePlot can only plot a single `channel`')
-
-        self._sampleCount = int(self._tsRange*self._fs)
-        self._index = np.arange(self._spikeCount*self._sampleCount,
+        self._spikeLength = params['spikeLength']
+        self._index       = np.arange(self._spikeCount*self._spikeLength,
             dtype=np.float32)
-        self._data  = np.zeros((self._spikeCount, self._sampleCount),
+        self._data        = np.zeros((self._spikeCount, self._spikeLength),
             dtype=np.float32)
 
-        self._program['u_sample_count'] = self._sampleCount
+        self._program['u_spike_length'] = self._spikeLength
         self._program['a_index'       ] = self._index
         self._program['a_data'        ] = self._data
+
+    def _updateText(self):
+        if not self._text: return
+
+        self._text.transforms.configure(canvas=self._canvas,
+            viewport=self._canvas.viewport)
+
+        fig = self._figure
+
+        self._text.pos = fig._pxlViewCenter - fig._pxlViewSize/2 + 5
 
     def _auxConfigured(self):
         pass
@@ -1185,13 +1212,13 @@ class SpikePlot(Plot, pipeline.Sampled):
         pass
 
     def _written(self, data, source):
-        data = data.reshape((-1, self._sampleCount))
-        spikeCount = data.shape[0]
-        window = np.arange(self._spikeIndex, self._spikeIndex+spikeCount)
-        window %= self._spikeCount
-
-        self._data[window, :] = data
-        self._spikeIndex += spikeCount
+        for spike in data:
+            if len(spike) != self._spikeLength:
+                raise ValueError('Spike length discrepancy (%d != %d)' %
+                    (len(spike), self._spikeLength))
+            spikeIndex = self._spikeIndex % self._spikeCount
+            self._data[spikeIndex] = spike
+            self._spikeIndex += 1
 
         with self._lock:
             self._program['u_spike_index'] = self._spikeIndex
@@ -1199,8 +1226,13 @@ class SpikePlot(Plot, pipeline.Sampled):
 
         super()._written(data, source)
 
+    def on_resize(self, event):
+        self._updateText()
+
     def draw(self):
         super().draw('line_strip', smooth=True)
+        if self._text:
+            self._text.draw()
 
 
 class Generator(pipeline.Sampled):
@@ -1290,27 +1322,61 @@ class SpikeGenerator(Generator):
 
 
 class SpikeDetector(pipeline.Sampled):
-    def __init__(self, **kwargs):
-        self._buffer = None
-        self._count = 0
+    def __init__(self, tl=4, th=20, spikeDuration=2e-3, **kwargs):
+        '''
+        Args:
+            tl (float): Lower detection threshold
+            th (float): Higher detection threshold
+            spikeDuration (float): Spike window duration
+        '''
+        self._tl            = tl
+        self._th            = th
+        self._spikeDuration = spikeDuration
+        self._spikeLength   = None
+        self._buffer        = None
+        self._sd            = None
 
         super().__init__(**kwargs)
 
     def _configured(self, params, sinkParams):
+        self._spikeLength         = int(self._spikeDuration*params['fs'])
+        sinkParams['spikeLength'] = self._spikeLength
+
         super()._configured(params, sinkParams)
 
         self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
 
     def _written(self, data, source):
-        # self._buffer.write(data)
+        self._buffer.write(data)
 
-        length = int(1e-3*self._fs)
+        nsRead      = self._buffer.nsRead
+        nsAvailable = self._buffer.nsAvailable
 
-        if data.shape[1] > length and self._count%30==0:
-            data = data[:,:length]
-            super()._written(data, source)
+        if (nsRead<self._fs*5 and nsAvailable>self._fs
+                or nsRead>self.fs*5 and nsAvailable>self._fs*5):
+            self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
 
-        self._count += 1
+        # do not detect spikes until enough samples are available for
+        # calculating standard deviation of noise
+        if self._sd is None: return
+
+        windowHalf  = self._spikeLength/2
+        windowStart = int(np.floor(windowHalf))
+        windowStop  = int(np.ceil(windowHalf))
+        dataOut     = [None]*self._channels
+
+        # TODO: append last half window samples of previous data to current data
+        for i in range(self._channels):
+            dataOut[i] = []
+
+            peaks, _ = sp.signal.find_peaks(-data[i],
+                height=(self._tl*self._sd, self._th*self._sd),
+                distance=windowHalf)
+            for peak in peaks:
+                if 0 <= peak-windowStart and peak+windowStop < len(data[i]):
+                    dataOut[i] += [data[i,peak-windowStart:peak+windowStop]]
+
+        super()._written(dataOut, source)
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -1319,7 +1385,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.canvas     = Canvas()
         self.scope      = Scope(parent=self.canvas, untPos=(0,0),
-            untSize=(.6,1), pxlMargins=(60,15,15,15))
+            untSize=(.7,1), pxlMargins=(60,15,15,15))
         self.analogPlot = AnalogPlot(figure=self.scope, untPos=(0,0),
             untSize=(1,.9), names=str)
         self.targetPlot = EpochPlot(figure=self.scope, untPos=(0,.9),
@@ -1328,22 +1394,27 @@ class MainWindow(QtWidgets.QWidget):
             untSize=(1,.05), name='Pump', color=(0,0,1,.7))
         # self.targetPlot.write([2,4])
 
-        self.cont = Container(parent=self.canvas, untPos=(.6,0),
-            untSize=(.4,1), pxlMargins=(0,15,15,15))
+        self.spikeCont = Container(parent=self.canvas, untPos=(.7,0),
+            untSize=(.3,1), pxlMargins=(0,15,15,15))
 
         self.spikeFigures = [None]*15
         self.spikePlots   = [None]*15
         for i in range(15):
-            self.spikeFigures[i] = Figure(parent=self.cont,
+            self.spikeFigures[i] = Figure(parent=self.spikeCont,
                 untPos=(.25*(i%4),.25*(i//4)), untSize=(.25,.25),
                 pxlMargins=(0,0,0 if i%4==3 else 1,0 if i//4==3 else 1))
+                # untPos=(.5*(i%2),.125*(i//2)), untSize=(.5,.125),
+                # pxlMargins=(0,0,0 if i%2==1 else 1,0 if i//2==7 else 1))
             self.spikePlots[i] = SpikePlot(figure=self.spikeFigures[i],
-                color=_defaultColors[i%len(_defaultColors)])
+                name=str(i+1), color=_defaultColors[i%len(_defaultColors)])
 
         self.generator = SpikeGenerator(fs=31.25e3, channels=15)
-        self.filter = pipeline.LFilter(fl=300, fh=6000)
+        self.filter    = pipeline.LFilter(fl=100, fh=6000)
+        self.grandAvg  = pipeline.GrandAverage()
 
-        self.generator >> (
+        # setup pipeline
+        self.generator >> self.grandAvg >> self.filter >> (
+            self.scope,
             self.analogPlot,
             self.targetPlot.aux,
             self.pumpPlot.aux,
