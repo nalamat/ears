@@ -352,7 +352,8 @@ class Split(Node):
             raise ValueError('`data` size should match `sink` count')
 
         # compatibility with Sampled Nodes
-        if hasattr(self, '_channels') and self._channels != len(self._sinks):
+        if ('channels' in self._params
+                and self._params['channels'] != len(self._sinks)):
             raise ValueError('`channels` should match `sink` count')
 
         # mask Node behavior
@@ -384,7 +385,10 @@ class Sampled(Node):
     @property
     def ts(self):
         '''Current timestamp in seconds'''
-        return self._ns/self._fs
+        if self._fs is None:
+            return 0
+        else:
+            return self._ns/self._fs
 
     def __init__(self, **kwargs):
         self._fs       = None
