@@ -1114,6 +1114,10 @@ class BaseEpochChannel(BaseChannel):
     def plotWidget(self):
         return self._plotWidget
 
+    @property
+    def active(self):
+        return len(self._data) and self._data[-1][1] is None
+
     def __init__(self, plotWidget=None, hdf5Node=None, source=None,
             label=None, labelOffset=0):
 
