@@ -683,6 +683,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         elif (event.key() == QtCore.Qt.Key_Escape and
                 gb.status.experimentState.value == 'Running'):
             self.pauseExperiment()
+        elif event.key() == QtCore.Qt.Key_Delete:
+            self.stopPump()
 
     @gui.showExceptions
     def sessionChanged(self, item, *args):
@@ -1169,30 +1171,37 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     gb.status.trialState.value = 'Target active'
                     self.startTarget()
                 elif event == 'Button stop':
-                    raise RuntimeError('Should never happen!!')
+                    # raise RuntimeError('Should never happen!!')
+                    self.stopTarget()
                 elif event == 'Spout start':
                     pass
                 elif event == 'Spout stop':
-                    self.stopPump()
+                    # self.stopPump()
+                    pass
 
             elif state == 'Target active':
                 if event == 'Button start':
                     raise RuntimeError('Should never happen!!')
                 if event == 'Button stop':
-                    if self.pumpActive:
-                        gb.status.trialState.value = 'Awaiting button'
-                        self.stopTarget()
-                        self.evaluateParadigm()
-                    else:
-                        gb.status.trialState.value = 'Response duration'
-                        self.startEventTimer(
-                            gb.trial.maxResponseDuration.value,
-                            'Response duration elapsed')
-                        self.stopTarget()
+                    # if self.pumpActive:
+                    #     gb.status.trialState.value = 'Awaiting button'
+                    #     self.stopTarget()
+                    #     self.evaluateParadigm()
+                    # else:
+                    gb.status.trialState.value = 'Response duration'
+                    self.startEventTimer(
+                        gb.trial.maxResponseDuration.value,
+                        'Response duration elapsed')
+                    self.stopTarget()
                 elif event == 'Spout start':
-                    self.startPump()
+                    gb.status.trialState.value = 'Awaiting button'
+                    self.stopEventTimer()
+                    self.triggerPump()
+                    self.evaluateParadigm()
                 elif event == 'Spout stop':
-                    self.stopPump()
+                    # self.stopPump()
+                    # can happen if spout was initiated in 'Awaiting button'
+                    pass
 
             elif state == 'Response duration':
                 if event == 'Button start':
@@ -1204,9 +1213,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 elif event == 'Spout start':
                     gb.status.trialState.value = 'Awaiting button'
                     self.stopEventTimer()
-                    self.startPump()
+                    self.triggerPump()
                     self.evaluateParadigm()
                 elif event == 'Spout stop':
+                    # self.stopPump()
                     # can happen if spout was initiated in 'Awaiting button'
                     pass
                 elif event == 'Response duration elapsed':
@@ -1483,7 +1493,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         minDelay = (gb.trial.targetDuration.value +
             gb.trial.intertrialDuration.value)
-        maxDelay = 10
+        maxDelay = 7
         duration = np.random.rand()*(maxDelay-minDelay) + minDelay
         self.startEventTimer(duration, 'Random trigger')
 
