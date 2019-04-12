@@ -18,6 +18,7 @@ import datetime   as     dt
 from   scipy      import signal
 from   vispy      import app, gloo, visuals
 from   PyQt5      import QtCore, QtGui, QtWidgets
+from   ctypes     import sizeof, c_void_p, c_uint, c_float
 from   OpenGL.GL  import *
 
 import misc
@@ -1231,8 +1232,8 @@ class SpikePlot(Plot, pipeline.Node):
 
     def draw(self):
         super().draw('line_strip', smooth=True)
-        if self._text:
-            self._text.draw()
+        # if self._text:
+        #     self._text.draw()
 
 
 class Generator(pipeline.Sampled):
@@ -1306,14 +1307,14 @@ class SpikeGenerator(Generator):
         data = .1*np.random.randn(self._channels, ns2-ns1)
         dt = (ns2-ns1)/self._fs
 
-        counts = np.random.uniform(0, dt*1000/25, self._channels)
+        counts = np.random.uniform(0, dt*1000/30, self._channels)
         counts = np.round(counts).astype(np.int)
 
         for channel in range(self._channels):
             for i in range(counts[channel]):
                 # random spike length, amplitude, and location
                 length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
-                amp    = np.random.uniform(.3, .7)
+                amp    = np.random.uniform(.3, 1)
                 at     = int(np.random.uniform(0, data.shape[1]-length))
                 spike  = -amp*sp.signal.gaussian(length, length/7)
                 data[channel, at:at+length] += spike
