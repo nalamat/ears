@@ -17,3 +17,11 @@ x should Context.clearValues set all items to type()? what about np.nan?
 + log pump
 - add _nsOffset to daq.AnalogInput
 - migrate plotting subsystem to vispy and gloo
+- add notes to export
+- add push in (checkbox style) go/nogo buttons
+- add a number parameter for repeat if FA
+- add number of go reminds in the beginning of session
+- add screenshots to github page
+- add a readme
+- add 2 decimal points to experiment duration when exporting
+- add export for spout training and target training
