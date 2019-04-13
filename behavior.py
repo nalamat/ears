@@ -998,7 +998,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             data += get('responseDuration', '%.3f', 'Nogo'   ) + '\t'
             data += get('dPrime'          , '%.3f'           ) + '\t'
             if i==0:
-                data += gb.session.notes.value + '\t'
+                data += gb.session.notes.value
 
             data += '\r\n'
 
