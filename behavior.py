@@ -969,8 +969,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             # total reward (ml)
             if i==0: data += '%g' % gb.session.totalReward.value
             data += '\t'
-            # experiment duration (mm:ss)
-            if i==0: data += '%02d:%02d' % (
+            # experiment duration (mm:ss.00)
+            if i==0: data += '%02d:%05.2f' % (
                 gb.session.experimentDuration.value//60,
                 gb.session.experimentDuration.value%60       )
             data += '\t'
@@ -997,6 +997,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             data += get('responseDuration', '%.3f', 'Go'     ) + '\t'
             data += get('responseDuration', '%.3f', 'Nogo'   ) + '\t'
             data += get('dPrime'          , '%.3f'           ) + '\t'
+            if i==0:
+                data += gb.session.notes.value + '\t'
 
             data += '\r\n'
 
