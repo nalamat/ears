@@ -520,13 +520,14 @@ class AnalogChannel(BaseChannel):
 
             # prep filter
             fs = self.fs
+            nyq = fs/2
             fl, fh = value
             if (fl and 0<fl and fh and fh<fs):
-                filterBA = sp.signal.butter(6, [fl/fs,fh/fs], 'bandpass')
+                filterBA = sp.signal.butter(6, [fl/nyq,fh/nyq], 'bandpass')
             elif fl and 0<fl:
-                filterBA = sp.signal.butter(6, fl/fs, 'highpass')
+                filterBA = sp.signal.butter(6, fl/nyq, 'highpass')
             elif fh and fh<fs:
-                filterBA = sp.signal.butter(6, fh/fs, 'lowpass')
+                filterBA = sp.signal.butter(6, fh/nyq, 'lowpass')
             else:
                 filterBA = None
 

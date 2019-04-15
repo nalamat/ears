@@ -97,7 +97,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
                                 self.timePlot, label=lineLabels,
                                 hdf5Node='/trace/physiology',
                                 lineCount=lineCount, filter=(300,6e3),
-                                yScale=.1, yOffset=14, yGap=-1, grandMean=True)
+                                yScale=10, yOffset=14, yGap=-1, grandMean=True)
 
         # rectangular plots
         self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
