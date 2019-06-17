@@ -55,10 +55,10 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 ## Web and contact
 
 Visit the EARS page at GitHub:
-http://github.com/nalamat/ears
+https://github.com/nalamat/ears
 
 Ask questions, report bugs and give suggestions here:
-http://github.com/nalamat/ears/issues
+https://github.com/nalamat/ears/issues
 
 Visit lab website:
 https://centers.njit.edu/nesh
