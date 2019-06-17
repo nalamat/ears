@@ -55,14 +55,14 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 ## Web and contact
 
 Visit the EARS page at GitHub:
-    http://github.com/nalamat/ears
+http://github.com/nalamat/ears
 
 Ask questions, report bugs and give suggestions here:
-    http://github.com/nalamat/ears/issues
+http://github.com/nalamat/ears/issues
 
 Visit lab website:
-    https://centers.njit.edu/nesh
+https://centers.njit.edu/nesh
 
 Feel free to email us about anything:
-    Nima Alamatsaz: nima.alamatsaz@gmail.com
-    Antje Ihlefeld: antje.ihlefeld@njit.edu
+- Nima Alamatsaz: nima.alamatsaz@gmail.com
+- Antje Ihlefeld: antje.ihlefeld@njit.edu
