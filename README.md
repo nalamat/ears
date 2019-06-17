@@ -38,7 +38,7 @@ experiment session.
 
 ![Alt text](images/screenshot-1.png?raw=true "Behavior Window")
 
-![Alt text](images/screenshot-1.png?raw=true "Physiology Window")
+![Alt text](images/screenshot-2.png?raw=true "Physiology Window")
 
 
 ## Resources
