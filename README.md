@@ -36,9 +36,9 @@ recording type selected at setup, either the behavior, or both behavior and
 physiology windows shown below will open for viewing and controlling the
 experiment session.
 
-![Alt text](images/screenshot-1?raw=true "Behavior Window")
+![Alt text](images/screenshot-1.png?raw=true "Behavior Window")
 
-![Alt text](images/screenshot-1?raw=true "Physiology Window")
+![Alt text](images/screenshot-1.png?raw=true "Physiology Window")
 
 
 ## Resources
