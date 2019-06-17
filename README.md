@@ -29,7 +29,7 @@ experiment session.
 
 ## Resources
 
-Inspired by and partially rewritten from Neurobehavior by Brad Buran:
+Inspired by and partially rewritten from NeuroBehavior by Brad Buran:
 https://bitbucket.org/bburan/neurobehavior
 
 Electronic circuits:
@@ -63,6 +63,8 @@ https://github.com/nalamat/ears/issues
 Visit lab website:
 https://centers.njit.edu/nesh
 
-Feel free to email us about anything:
+Feel free to email us about anything at:
+- NESH Lab: ears.software@gmail.com
+
+Written by:
 - Nima Alamatsaz: nima.alamatsaz@gmail.com
-- Antje Ihlefeld: antje.ihlefeld@njit.edu
