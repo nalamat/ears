@@ -1,8 +1,32 @@
 # EARS: Electrophysiology Auditory Recording System
 
-The EARS software controls a closed-loop system developed for synchronized rodent auditory behavioral assessment with simultaneous real-time wireless recording of cortical electrophysiology to study hearing in situations with background sound. EARS supports data acquisition with up to two simultaneous sound sources, a target and a masker. The masker sound is played continuously throughout each recording session. The target sound is triggered through animal behavior and played back at a fixed phase delay relative to the masker. The signal-to-noise ratio of target and masker can be adjusted online. General digital/analog input/output operations are facilitated through two PCIe data acquisition (DAQ) cards (PCIe-6321 and PCIe-6341, National Instruments Corporation). A single 16-bit analog channel is utilized at 100 kS/s to output auditory stimuli to a sound amplifier and then into a loudspeaker. 15 analog input channels are employed for collecting physiological signals from a bioamplifier at a sampling frequency of 31.25 kS/s per channel. Custom electronic circuits are designed to drive IR emitter diodes and also to condition the output signal of their paired photodiodes (See Resources section for circuit designs) so as to make compatible with the DAQ card’s digital input channels. An additional digital channel is used to control the testing booth’s lights. All input/output channels are synchronized by sharing the sampling clock pulse of the two DAQ cards via an RTSI bus cable. A syringe pump (NE-1000 Programmable Single Syringe Pump, New Era Pump Systems, Inc.) is interfaced through a USB-RS232 emulator using its own factory defined protocols and set of commands.
+The EARS software controls a closed-loop system developed for synchronized
+rodent auditory behavioral assessment with simultaneous real-time wireless
+recording of cortical electrophysiology to study hearing in situations with
+background sound. EARS supports data acquisition with up to two simultaneous
+sound sources, a target and a masker. The masker sound is played continuously
+throughout each recording session. The target sound is triggered through animal
+behavior and played back at a fixed phase delay relative to the masker. The
+signal-to-noise ratio of target and masker can be adjusted online. General
+digital/analog input/output operations are facilitated through two PCIe data
+acquisition (DAQ) cards (PCIe-6321 and PCIe-6341, National Instruments
+Corporation). A single 16-bit analog channel is utilized at 100 kS/s to output
+auditory stimuli to a sound amplifier and then into a loudspeaker. 15 analog
+input channels are employed for collecting physiological signals from a
+bioamplifier at a sampling frequency of 31.25 kS/s per channel. Custom
+electronic circuits are designed to drive IR emitter diodes and also to
+condition the output signal of their paired photodiodes (See Resources section
+for circuit designs) so as to make compatible with the DAQ card’s digital input
+channels. An additional digital channel is used to control the testing booth’s
+lights. All input/output channels are synchronized by sharing the sampling clock
+pulse of the two DAQ cards via an RTSI bus cable. A syringe pump (NE-1000
+Programmable Single Syringe Pump, New Era Pump Systems, Inc.) is interfaced
+through a USB-RS232 emulator using its own factory defined protocols and set of
+commands.
 
-This work was completed as a part of my PhD in the Neural Engineering of Speech and Hearing (NESH) lab at New Jersey Institute of Technology (NJIT) and Rutgers University, and was supported by funding from NIH NIDCD R03-DC014008.
+This work was completed as a part of my PhD in the Neural Engineering of Speech
+and Hearing (NESH) lab at New Jersey Institute of Technology (NJIT) and Rutgers
+University, and was supported by funding from NIH NIDCD R03-DC014008.
 
 
 ## How to use
@@ -18,9 +42,9 @@ a simulation mode is available for development and testing purposes:
     $ python load.py --sim
 
 First the setup window opens for general experiment settings. Depending on the
-recording type selected at setup, either the behavior, or both behavior and
-physiology windows shown below will open for viewing and controlling the
-experiment session.
+selected recording type, either the behavior or both behavior and physiology
+windows shown below will open for viewing and controlling the experiment
+session.
 
 ![Alt text](images/screenshot-1.png?raw=true "Behavior Window")
 
