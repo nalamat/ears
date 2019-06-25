@@ -213,7 +213,7 @@ class CircularBuffer():
         indices %= self._data.shape[self._axis]
         window = [slice(None)]*self._data.ndim
         window[self._axis] = indices
-        return window
+        return tuple(window)
 
     def write(self, data, at=None):
         '''Write samples to the end of buffer.
