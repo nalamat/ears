@@ -50,7 +50,7 @@ session.
 
 ![Alt text](images/screenshot-2.png?raw=true "Physiology Window")
 
-Here's a video of the software in action: [images/recording-1.mp4?raw=true]
+Here's a video of the software in action: [./images/recording-1.mp4?raw=true]
 
 ## Resources
 
