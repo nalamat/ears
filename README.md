@@ -28,6 +28,9 @@ This work was completed as a part of my PhD in the Neural Engineering of Speech
 and Hearing (NESH) lab at New Jersey Institute of Technology (NJIT) and Rutgers
 University, and was supported by funding from NIH NIDCD R03-DC014008.
 
+Here's a video of the software in action:
+[recording-1.mp4](images/recording-1.mp4?raw=true)
+
 
 ## How to use
 
@@ -50,8 +53,6 @@ session.
 
 ![Alt text](images/screenshot-2.png?raw=true "Physiology Window")
 
-Here's a video of the software in action:
-[recording-1.mp4](images/recording-1.mp4?raw=true)
 
 ## Resources
 
