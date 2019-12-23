@@ -29,7 +29,7 @@ and Hearing (NESH) lab at New Jersey Institute of Technology (NJIT) and Rutgers
 University, and was supported by funding from NIH NIDCD R03-DC014008.
 
 Here's a video of the software in action:
-[recording-1.mp4](images/recording-1.mp4?raw=true)
+[recording-1.mp4](media/recording-1.mp4?raw=true)
 
 
 ## How to use
@@ -49,9 +49,9 @@ selected recording type, either the behavior or both behavior and physiology
 windows shown below will open for viewing and controlling the experiment
 session.
 
-![Alt text](images/screenshot-1.png?raw=true "Behavior Window")
+![Alt text](media/screenshot-1.png?raw=true "Behavior Window")
 
-![Alt text](images/screenshot-2.png?raw=true "Physiology Window")
+![Alt text](media/screenshot-2.png?raw=true "Physiology Window")
 
 
 ## Resources
