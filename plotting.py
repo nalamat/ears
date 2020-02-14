@@ -2,18 +2,9 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import time
@@ -27,8 +18,9 @@ import datetime     as     dt
 import pyqtgraph    as     pg
 from   PyQt5        import QtCore, QtWidgets, QtGui
 
-import misc
 import hdf5
+import misc
+import pipeline
 
 
 log = logging.getLogger(__name__)
@@ -64,7 +56,7 @@ class ScrollingPlotWidget(pg.PlotWidget):
 
     @timeBase.setter
     def timeBase(self, value):
-        if not isinstance(value, AnalogChannel):
+        if not isinstance(value, (AnalogChannel, AnalogPlot)):
             raise TypeError('`timeBase` can only be an instance '
                 'of `AnalogChannel`')
         self._timeBase = value
@@ -186,7 +178,7 @@ class ScrollingPlotWidget(pg.PlotWidget):
         self.getAxis('top').setTicks([xMajorTicks, xMinorTicks])
 
     def add(self, channel, label=None, labelOffset=0):
-        if not isinstance(channel, (AnalogChannel, BaseEpochChannel)):
+        if not isinstance(channel, (AnalogChannel, AnalogPlot, BaseEpochChannel)):
             raise TypeError('Plot should be an instance of AnalogChannel, '
                 'BaseEpochChannel or one of their subclasses')
         if channel in self._channels:
@@ -861,6 +853,121 @@ class AnalogChannel(BaseChannel):
     def refresh(self):
         with self._refreshLock:
             self._refresh()
+
+
+class AnalogPlot(pipeline.Sampled):
+    '''All-in-one class for storage and plotting of multiline analog signals.
+
+    Utilizes the `hdf5` module for storage in HDF5 file format.
+
+    Needs to be paired with a ScrollingPlotWidget for plotting.
+    '''
+
+    @property
+    def plotWidget(self):
+        return self._plotWidget
+
+    @property
+    def lineCount(self):
+        return self._lineCount
+
+    @property
+    def yScale(self):
+        return self._yScale
+
+    @yScale.setter
+    def yScale(self, value):
+        self._yScale = value
+
+    def __init__(self, plotWidget, label=None, labelOffset=0, yScale=1,
+            yOffset=0, yGap=1, color=list('rgbcmyk'), chunkSize=.5, **kwargs):
+
+        self._plotWidget     = plotWidget
+        self._label          = label
+        self._labelOffset    = labelOffset
+        self._yScale         = yScale
+        self._yOffset        = yOffset
+        self._yGap           = yGap
+        self._color          = color if isinstance(color, list) else [color]
+        self._chunkSize      = chunkSize
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._lineCount = self._channels
+
+        buffer1Size   = int(self.plotWidget.xRange*self._fs*1.2)
+        self._buffer1 = misc.CircularBuffer((self._lineCount, buffer1Size))
+
+        self._labelOffset += (np.arange(self._lineCount) * self._yGap
+            + self._yOffset)
+        self._plotWidget.add(self, self._label, self._labelOffset)
+
+        # prepare plotting chunks
+        self._chunkCount = int(np.ceil(self.plotWidget.xRange
+            / self._chunkSize))
+        self._curves = [[None]*self._chunkCount
+            for i in range(self._lineCount)]
+        for i in range(self._lineCount):
+            for j in range(self._chunkCount):
+                self._curves[i][j] = self.plotWidget.plot([], [],
+                    pen=self._color[i % len(self._color)])
+
+    def _written(self, data, source):
+        '''
+        Args:
+            data (numpy.array): 1D for single line or 2D for multiple lines
+                with the following format: lines x samples
+        '''
+
+        # keep a local copy of data in a circular buffer
+        # for online processing and fast plotting
+        with self._buffer1:
+            self._buffer1.write(data)
+
+        super()._written(data, source)
+
+    def update(self, ts=None, tsMin=None, nextWindow=False):
+        if not self._buffer1.updated: return
+
+        with self._buffer1:
+            nsRange      = int(self.plotWidget.xRange*self._fs)
+            chunkSamples = int(self._chunkSize*self._fs)
+
+            nsFrom       = self._buffer1.nsRead
+            nsFromMin    = nsFrom // nsRange * nsRange
+            chunkFrom    = (nsFrom - nsFromMin) // chunkSamples
+
+            nsTo         = self._buffer1.nsWritten
+            nsToMin      = nsTo // nsRange * nsRange
+            chunkTo      = (nsTo - nsToMin) // chunkSamples
+            chunkTo      = min(chunkTo, self._chunkCount-1)
+
+            # when plot advances to next time window
+            # if nextWindow: chunkFrom = chunkTo = 0
+            if chunkTo < chunkFrom: chunkFrom = 0
+
+            try:
+                for chunk in range(chunkFrom, chunkTo+1):
+                    nsChunkFrom  = nsToMin + chunk*chunkSamples
+                    nsChunkTo    = min(nsTo, nsChunkFrom+chunkSamples)
+                    if nsChunkFrom == nsChunkTo: continue
+                    time         = np.arange(nsChunkFrom,
+                                   nsChunkTo) / self._fs
+                    data         = self._buffer1.read(nsChunkFrom, nsChunkTo)
+                    for line in range(self.lineCount):
+                        self._curves[line][chunk].setData(time,
+                            data[line,:]*self._yScale
+                            + self._yOffset + line*self._yGap)
+            except:
+                log.info('nsRange %d, chunkSamples %d, nsFrom %d, '
+                    'nsFromMin %d, chunkFrom %d, nsTo %d, nsToMin %d, '
+                    'chunkTo %d, chunk %d, line %d', nsRange, chunkSamples,
+                    nsFrom, nsFromMin, chunkFrom, nsTo, nsToMin, chunkTo,
+                    chunk, line)
+                raise
 
 
 class MultiLine(pg.QtGui.QGraphicsPathItem):

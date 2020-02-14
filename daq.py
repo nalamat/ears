@@ -2,18 +2,9 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import re
@@ -26,6 +17,7 @@ import numpy     as np
 import datetime  as dt
 
 import misc
+import pipeline
 
 
 SIM = '--sim' in sys.argv
@@ -495,7 +487,7 @@ class BaseAnalog(BaseTask):
         # self.WaitUntilTaskDone(mx.DAQmx_Val_WaitInfinitely)
 
 
-class AnalogInput(BaseAnalog):
+class AnalogInput(BaseAnalog, pipeline.Sampled):
     @property
     def nsRead(self):
         '''Total number of samples read.'''
@@ -622,6 +614,8 @@ class AnalogInput(BaseAnalog):
         self._postInit(accurateFS, timebaseSrc, timebaseRate,
             startTrigger)
 
+        pipeline.Sampled.__init__(self, fs=self._fs, channels=self._lineCount)
+
         if SIM:
             self._simBuffer = misc.CircularBuffer((self.lineCount, bufSize))
             # set simulated acquisition interval
@@ -697,6 +691,8 @@ class AnalogInput(BaseAnalog):
         data = self._read()
         # pass data to all registered callbacks
         self.dataAcquired(self, data)
+        # pass data down into the pipeline
+        pipeline.Sampled.write(self, data)
 
     def read(self, ns=None, wait=True):
         '''Read samples from the device.

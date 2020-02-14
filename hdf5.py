@@ -2,18 +2,9 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import queue
@@ -23,7 +14,7 @@ import threading
 # import multiprocessing
 import tables          as tb
 
-import misc
+import pipeline
 
 
 log   = logging.getLogger(__name__)
@@ -176,6 +167,43 @@ def _checkFile():
 #         log.exception('')
 #
 #     log.info('Stopping HFD5 loop')
+
+
+class AnalogStorage(pipeline.Sampled):
+    def __init__(self, hdf5Node, compLib='zlib', compLevel=1, **kwargs):
+        '''
+        Args:
+            hdf5Node (str): Path of the node to store data in HDF5 file.
+            compLib (str): Compression library, should be one of the following:
+                zlib, lzo, bzip2, blosc, blosc:blosclz, blosc:lz4,
+                blosc:lz4hc, blosc:snappy, blosc:zlib, blosc:zstd
+            compLevel: Level of compression can vary from 0 (no compression)
+                to 9 (maximum compression)
+        '''
+        if not isinstance(hdf5Node, str):
+            raise TypeError('`hdf5Node` should be a string')
+
+        self._hdf5Node    = hdf5Node
+        self._hdf5Filters = tb.Filters(complib=compLib, complevel=compLevel)
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        if contains(self._hdf5Node):
+            raise NameError('HDF5 node %s already exists' % self._hdf5Node)
+        createEArray(self._hdf5Node, tb.Float32Atom(),
+            (0, self._channels), '', self._hdf5Filters,
+            expectedrows=self._fs*60*30)    # 30 minutes
+        setNodeAttr(self._hdf5Node, 'fs', self._fs)
+
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
+
+        appendArray(self._hdf5Node, data.transpose())
+
+        return data
 
 
 if __name__ == '__main__':

@@ -2,18 +2,9 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import os
@@ -38,6 +29,7 @@ import hdf5
 import misc
 import pump
 import config
+import pipeline
 import plotting
 import globals          as     gb
 
@@ -171,28 +163,55 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     def initPlot(self):
 
-        inputFS           = daqs.analogInput.fs
-        physiology        = gb.session.recording.value == 'Physiology'
-        speakerNode       = '/trace/speaker' if physiology else None
-        micNode           = '/trace/mic'     if physiology else None
+        # inputFS           = daqs.analogInput.fs
+        # physiology        = gb.session.recording.value == 'Physiology'
+        # speakerNode       = '/trace/speaker' if physiology else None
+        # micNode           = '/trace/mic'     if physiology else None
 
         # plot widget
         self.plot         = plotting.ScrollingPlotWidget(xRange=10,
                             yLimits=(-1,7.5), yGrid=[-.5,0,1,2,2.5,4.5,5,6,7])
 
         # analog traces
-        self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
-                            label='Speaker', hdf5Node=speakerNode,
+        # self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Speaker', hdf5Node=speakerNode,
+        #                     yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
+        # self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Mic', hdf5Node=micNode,
+        #                     yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
+        # self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Poke', labelOffset=.5,
+        #                     yScale=.2, yOffset=1, color=config.COLOR_POKE)
+        # self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
+        #                     label='Spout', labelOffset=.5,
+        #                     yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+
+        self.speakerTrace = plotting.AnalogPlot(self.plot,
+                            label='Speaker',
                             yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
-        self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
-                            label='Mic', hdf5Node=micNode,
+        self.micTrace     = plotting.AnalogPlot(self.plot,
+                            label='Mic',
                             yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
-        self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
+        self.pokeTrace    = plotting.AnalogPlot(self.plot,
                             label='Poke', labelOffset=.5,
                             yScale=.2, yOffset=1, color=config.COLOR_POKE)
-        self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
+        self.spoutTrace   = plotting.AnalogPlot(self.plot,
                             label='Spout', labelOffset=.5,
                             yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+
+        (daqs.analogInput >> pipeline.DownsampleAverage(ds=4) >>
+            pipeline.Split() >> (self.speakerTrace,
+                                 self.micTrace,
+                                 self.pokeTrace,
+                                 self.spoutTrace))
+
+        if gb.session.recording.value == 'Physiology':
+            self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
+            self.micStorage     = hdf5.AnalogStorage('/trace/mic')
+
+            daqs.analogInput >> pipeline.Split() >> (self.speakerStorage,
+                                                     self.micStorage,
+                                                     pipeline.DummySink(2))
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,
@@ -1038,10 +1057,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     def analogInputDataAcquired(self, task, data):
         speaker, mic, poke, spout = data
         # log.info('Appending analog data: %d samples', data.shape[-1])
-        self.speakerTrace.append(speaker)
-        self.micTrace    .append(mic    )
-        self.pokeTrace   .append(poke   )
-        self.spoutTrace  .append(spout  )
+        # self.speakerTrace.append(speaker)
+        # self.micTrace    .append(mic    )
+        # self.pokeTrace   .append(poke   )
+        # self.spoutTrace  .append(spout  )
         # log.info('Appended analog data')
 
     def analogOutputDataNeeded(self, task, nsWritten, nsNeeded):

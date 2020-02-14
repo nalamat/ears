@@ -2,21 +2,12 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 
 Original project repository: https://bitbucket.org/bburan/new-era
 Copyright (C) 2011-2012 Brad Buran <bburan@alum.mit.edu>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
 '''
 
 import re
@@ -81,7 +72,7 @@ class PumpCommError(PumpError):
             ''      : 'Command is not recognized',
             'NA'    : 'Command is not currently applicable',
             'OOR'   : 'Command data is out of range',
-            'COM'   : 'Invalid communications packet recieved',
+            'COM'   : 'Invalid communications packet received',
             'IGN'   : 'Command ignored due to new phase start',
             # Custom codes
             'NR'    : 'No response from pump',

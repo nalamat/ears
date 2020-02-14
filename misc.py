@@ -2,18 +2,9 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2019 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2019 NESH Lab <ears.software@gmail.com>
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version.
-This program is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
-You should have received a copy of the GNU General Public License along with
-this program. If not, see <http://www.gnu.org/licenses/>.
+Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import os
@@ -23,7 +14,8 @@ import pathlib
 import functools
 import threading
 import subprocess
-import numpy      as     np
+import collections
+import numpy       as     np
 
 
 log = logging.getLogger(__name__)
@@ -62,6 +54,9 @@ log = logging.getLogger(__name__)
 def listLike(obj, strIncluded=True):
     return (hasattr(obj, '__len__') and
         (strIncluded or not isinstance(obj, str)) )
+
+def iterable(obj):
+    return isinstance(obj, collections.Iterable)
 
 def inDirectory(file, directory):
     file      = os.path.normcase(os.path.realpath(file     ))
@@ -189,8 +184,8 @@ class CircularBuffer():
         '''
         self._data         = np.zeros(shape, dtype)
         self._axis         = axis
-        self._nsWritten   = 0
-        self._nsRead    = 0
+        self._nsWritten    = 0
+        self._nsRead       = 0
         self._updatedEvent = threading.Event()
         self._lock         = threading.Lock()
 
@@ -218,7 +213,7 @@ class CircularBuffer():
         indices %= self._data.shape[self._axis]
         window = [slice(None)]*self._data.ndim
         window[self._axis] = indices
-        return window
+        return tuple(window)
 
     def write(self, data, at=None):
         '''Write samples to the end of buffer.
@@ -308,27 +303,6 @@ class CircularBuffer():
         result = self._updatedEvent.isSet()
         if result: self._updatedEvent.clear()
         return result
-
-
-# class Channel():
-#     def __init__(self):
-#         _sink   = None
-#         _source = None
-#
-#     def write(self):
-#         raise NotImplementedError()
-#
-#     def read(self):
-#         raise NotImplementedError()
-#
-#     def connect(self, source=None, sink=None):
-#         if isinstance(source, Channel):
-#             self._source = source
-#             source._sink = self
-#
-#         if isinstance(sink, Channel):
-#             self._sink = sink
-#             source._source = self
 
 
 class Event():
