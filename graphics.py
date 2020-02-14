@@ -159,7 +159,7 @@ class Canvas(Container, vp.app.Canvas):
     def viewport(self):
         return (0, 0, *self.physical_size)
 
-    def __init__(self, bgColor=(1,1,1), fgColor=(.2,.2,.2), **kwargs):
+    def __init__(self, bgColor=(1,1,1), fgColor=(.3,.3,.3), **kwargs):
 
         super().__init__(bgColor=bgColor, fgColor=fgColor,
             vsync=True, config=dict(samples=1), **kwargs)
@@ -1158,7 +1158,7 @@ class SpikePlot(Plot, pipeline.Node):
 
         self._name       = name
         self._color      = color
-        self._spikeCount = 10
+        self._spikeCount = 20
         self._spikeIndex = 0
         self._aux        = pipeline.Auxillary(
             self._auxConfigured, self._auxWritten)
@@ -1383,6 +1383,7 @@ class SpikeDetector(pipeline.Sampled):
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super(MainWindow, self).__init__()
+        self.setWindowTitle('Graphics Acceleration Demo')
 
         self.canvas     = Canvas()
         self.scope      = Scope(parent=self.canvas, untPos=(0,0),
@@ -1398,9 +1399,10 @@ class MainWindow(QtWidgets.QWidget):
         self.spikeCont = Container(parent=self.canvas, untPos=(.7,0),
             untSize=(.3,1), pxlMargins=(0,15,15,15))
 
-        self.spikeFigures = [None]*15
-        self.spikePlots   = [None]*15
-        for i in range(15):
+        self.channels = 16
+        self.spikeFigures = [None]*self.channels
+        self.spikePlots   = [None]*self.channels
+        for i in range(self.channels):
             self.spikeFigures[i] = Figure(parent=self.spikeCont,
                 untPos=(.25*(i%4),.25*(i//4)), untSize=(.25,.25),
                 pxlMargins=(0,0,0 if i%4==3 else 1,0 if i//4==3 else 1))
@@ -1409,7 +1411,7 @@ class MainWindow(QtWidgets.QWidget):
             self.spikePlots[i] = SpikePlot(figure=self.spikeFigures[i],
                 name=str(i+1), color=_defaultColors[i%len(_defaultColors)])
 
-        self.generator = SpikeGenerator(fs=31.25e3, channels=15)
+        self.generator = SpikeGenerator(fs=31.25e3, channels=self.channels)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 

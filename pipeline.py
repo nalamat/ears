@@ -275,6 +275,7 @@ class Func(Node):
         data =  self._func(data)
         super()._written(data, source)
 
+
 class Thread(Node):
     '''Pass data onto sink nodes in a daemon thread.'''
 

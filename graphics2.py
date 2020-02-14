@@ -9,12 +9,15 @@ Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
 
 import math
 import time
+import logging
 import functools
 import threading
 import numpy      as     np
 import scipy      as     sp
+import vispy      as     vp
 import datetime   as     dt
 from   scipy      import signal
+from   vispy      import app, gloo, visuals
 from   PyQt5      import QtCore, QtGui, QtWidgets
 from   ctypes     import sizeof, c_void_p, c_bool, c_uint, c_float
 from   OpenGL.GL  import *
