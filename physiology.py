@@ -4,7 +4,7 @@
 This file is part of the EARS project: https://github.com/nalamat/ears
 Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import os
@@ -92,15 +92,10 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
-        # self.physiologyTrace  = plotting.AnalogChannel(physiologyFS,
-        #                         self.timePlot, label=lineLabels,
-        #                         hdf5Node='/trace/physiology',
-        #                         lineCount=lineCount, filter=(300,6e3),
-        #                         yScale=.1, yOffset=14, yGap=-1, grandMean=True)
-
         self.physiologyTrace   = plotting.AnalogPlot(self.timePlot,
                                 label=lineLabels,
-                                yScale=.1, yOffset=14, yGap=-1)
+                                yScale=.1 if config.SIM else 10,
+                                yOffset=14, yGap=-1)
 
         # self.physiologyTrace0  = plotting.AnalogPlot(self.timePlot,
         #                         label=lineLabels[0],
@@ -133,7 +128,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             #    ))
 
 
-        # rectangular plots
+        # rectangular epoch plots
         self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
                                 label='Trial', source=behavior.trialEpoch,
                                 yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)
