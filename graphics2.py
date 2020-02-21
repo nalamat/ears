@@ -15,13 +15,14 @@ import time
 import logging
 import functools
 import threading
-import numpy      as     np
-import scipy      as     sp
-import datetime   as     dt
-from   scipy      import signal
-from   PyQt5      import QtCore, QtGui, QtWidgets
-from   ctypes     import sizeof, c_void_p, c_bool, c_uint, c_float, string_at
-from   OpenGL.GL  import *
+import collections
+import numpy       as     np
+import scipy       as     sp
+import datetime    as     dt
+from   scipy       import signal
+from   PyQt5       import QtCore, QtGui, QtWidgets
+from   ctypes      import sizeof, c_void_p, c_bool, c_uint, c_float, string_at
+from   OpenGL.GL   import *
 
 import misc
 import config
@@ -54,7 +55,16 @@ defaultColors = np.array([
     [.6, 0 , 1 ],    # 18
     ])
 
+
+# used for high DPI display support
+# e.g. retina displays have a pixel ratio of 2.0
+def getPixelRatio():
+    return QtWidgets.QApplication.screens()[0].devicePixelRatio()
+
+
 class Program:
+    '''OpenGL shader program.'''
+
     _helperFunctions = '''
         vec2 transform(vec2 p, vec2 a, vec2 b) {
             return a*p + b;
@@ -120,38 +130,162 @@ class Program:
         if comp: glDeleteShader(comp)
 
         self.vao = glGenVertexArrays(1)
+        self.vbos = {}
+        self.ebo = None
 
-    def use(self):
+    def begin(self):
         glUseProgram(self.id)
         glBindVertexArray(self.vao)
 
-    # come up with a better function name
-    def unuse(self):
+    def end(self):
         glBindVertexArray(0)
         glUseProgram(0)
 
-    def setUniform(self, type, name, value):
+    def setUniform(self, name, type, value):
+        if not isinstance(value, collections.abc.Iterable): value = (value,)
         glUseProgram(self.id)
         id = glGetUniformLocation(self.id, name)
         globals()['glUniform' + type](id, *value)
+        glUseProgram(0)
+
+    def setVBO(self, name, type, size, data, usage):
+        '''Copy vertex data to a VBO and link to its vertex attribute.
+
+        Args:
+            name (str): As defined in the shader.
+            type (int): Of each component, e.g. GL_BYTE, GL_INT, GL_FLOAT
+            size (int): Number of components per vertex.
+            data (np.ndarray): Vertex data.
+            usage (int): Expected usage pattern, e.g. GL_STATIC_DRAW,
+                GL_DYNAMIC_DRAW, GL_STREAM_DRAW
+        '''
+        self.begin()
+        if name not in self.vbos: self.vbos[name] = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbos[name])
+        glBufferData(GL_ARRAY_BUFFER, data, usage)
+        loc = glGetAttribLocation(self.id, name)
+        glVertexAttribPointer(loc, size, type, GL_FALSE, 0, c_void_p(0))
+        glEnableVertexAttribArray(loc)
+        self.end()
+
+    def setEBO(self, data, usage):
+        self.begin()
+        if not self.ebo: self.ebo = glGenBuffers(1)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, data, usage)
+        self.end()
 
 
-class Text():
+class Item:
+    '''Graphical item capable of containing child items.'''
+    # `parent` needs to be defined out of __getattr__ to override
+    # QOpenGLWidget's property
+    @property
+    def parent(self):
+        return self._parent
+
+    @property
+    def canvas(self):
+        if self.parent:
+            return self.parent.canvas
+        else:
+            raise RuntimeError('No `parent`')
+
+    # properties with their default values
+    _properties = dict(parent=None, pos=(0,0), size=(1,1), margin=(0,0,0,0),
+        bgColor=(0,0,0,0), fgColor=(0,0,0,1), visible=True)
+
+    def __init__(self, **kwargs):
+        '''
+        Args:
+            parent
+            pos (2 floats): Item position in unit parent space (x, y).
+            size (2 floats): Item size in unit parent space (w, h).
+            margin (4 floats): Margin in pixels (l, t, r, b).
+            bgColor (3 floats): Backgoround color.
+            fgColor (3 floats): Foreground color for border and texts.
+        '''
+        super().__init__()
+        self._initProperties(Item._properties, kwargs)
+
+        # self._pxlPos    = np.array([0, 0])
+        # self._pxlSize   = np.array([1, 1])
+        self._items     = []
+
+        if self.parent:
+            self.parent.addItem(self)
+
+    def __getattr__(self, name):
+        if name in Item._properties:
+            return super().__getattribute__('_' + name)
+        else:
+            return super().__getattribute__(name)
+
+    def __setattr__(self, name, value):
+        if name in {'bgColor', 'fgColor'}:
+            super().__setattr__('_' + name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def _initProperties(self, properties, kwargs):
+        # initialize properties with the given or default values
+        # setter monitoring (updates, etc) won't apply here
+        for name, default in properties.items():
+            if hasattr(self, '_' + name):
+                continue
+            elif name in kwargs:
+                setattr(self, '_' + name, kwargs[name])
+            else:
+                setattr(self, '_' + name, default)
+
+    def addItem(self, item):
+        # if not isinstance(item, Item):
+        #     raise TypeError('`item` should be a Item')
+
+        self._items += [item]
+
+    def callItems(self, func, *args, **kwargs):
+        for item in self._items:
+            if hasattr(item, func):
+                getattr(item, func)(*args, **kwargs)
+
+    # called by Canvas.resizeGL
+    def canvasResized(self, size):
+        parent = self.parent
+
+        self._pxlPos = (parent._pxlPos + self._pos * (parent._pxlSize
+            - parent.margin[0:2] - parent.margin[2:4])
+            + parent.margin[0:2])
+        self._pxlSize = self._size * (parent._pxlSize
+            - parent.margin[0:2] - parent.margin[2:4])
+
+        self.callItems('canvasResized', size)
+
+    _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
+        'on_mouse_release', 'on_key_release', 'draw']
+    for func in _funcs:
+        exec('def %(func)s(self, *args, **kwargs):\n'
+            '    self.callItems("%(func)s", *args, **kwargs)' % {'func':func})
+
+
+class Text(Item):
+    '''Graphical text item.'''
+
     _vertShader = '''
-        layout (location = 0) in vec2 aVertex;
-        layout (location = 1) in vec2 aTexCoord;
+        in vec2 aVertex;
+        in vec2 aTexCoord;
 
         out vec2 TexCoord;
 
-        uniform vec2 uPos;     // unit
-        uniform vec2 uAnchor;  // unit
-        uniform vec2 uSize;    // pixels
-        uniform vec2 uWinSize; // pixels
+        uniform vec2 uPos;        // unit
+        uniform vec2 uAnchor;     // unit
+        uniform vec2 uSize;       // pixels
+        uniform vec2 uCanvasSize; // pixels
 
         void main() {
-            gl_Position =
-                vec4((aVertex.xy - uAnchor) * 2 * uSize / uWinSize +
-                uPos * 2 - vec2(1, 1), 0, 1);
+            gl_Position = vec4(
+                (aVertex-uAnchor)*2*uSize/uCanvasSize + uPos*2 - vec2(1,1),
+                0, 1);
             TexCoord = aTexCoord;
         }
         '''
@@ -185,16 +319,13 @@ class Text():
     # properties with their default values
     _properties = dict(text='', pos=(.5,.5), anchor=(.5,.5), margin=(0,0,0,0),
         fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
-        fgColor=(0,0,0,1), bgColor=(0,0,0,0), visible=True, test=False)
-
-    # properties linked with a uniform in the shader program ('format', 'name')
-    _uniforms = dict(pos=('2f', 'uPos'), anchor=('2f', 'uAnchor'))
+        bgColor=(0,0,0,0), fgColor=(0,0,0,1))
 
     def __init__(self, **kwargs):
         '''
         Args:
             text (str)
-            pos (2 floats): In unit container space.
+            pos (2 floats): In unit parent space.
             anchor (2 floats): In unit text space.
             margin (4 ints): In pixels (l, t, r, b).
             fontSize (float)
@@ -206,79 +337,62 @@ class Text():
             bgColor (4 floats): RGBA 0-1.
             visible (bool)
         '''
-        # initialize properties with the given or default values
-        for name, default in self._properties.items():
-            if name in kwargs:
-                super().__setattr__('_' + name, kwargs[name])
-            else:
-                super().__setattr__('_' + name, default)
 
-        self._vertices = np.array([
+        self._initProperties(Text._properties, kwargs)
+        super().__init__(**kwargs)
+
+        vertices = np.array([
             [0, 0],
             [0, 1],
             [1, 1],
             [1, 0],
             ], dtype=np.float32)
 
-        self._indices = np.array([
+        indices = np.array([
             [0,1,3],
             [1,2,3],
             ], dtype=np.uint32)
 
-        self._texCoords = np.array([
+        texCoords = np.array([
             [0, 1],
             [0, 0],
             [1, 0],
             [1, 1],
             ], dtype=np.float32)
 
-        self._vbo0 = glGenBuffers(1)
-        self._vbo1 = glGenBuffers(1)
-        self._vbo2 = glGenBuffers(1)
-        self._ebo = glGenBuffers(1)
         self._tex = glGenTextures(1)
+
         self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
-        self._prog.use()
-        self._prog.setUniform('2f', 'uPos', self.pos)
-        self._prog.setUniform('2f', 'uAnchor', self.anchor)
-        self._prog.setUniform('2f', 'uSize', (0, 0)) # set in update
-        self._prog.setUniform('2f', 'uWinSize', (0, 0)) # set in resizeGL
+        self._prog.setUniform('uPos', '2f', self.pos)
+        self._prog.setUniform('uAnchor', '2f', self.anchor)
+        self._prog.setUniform('uSize', '2f', (0,0)) # set in update
+        self._prog.setUniform('uCanvasSize', '2f', (0,0)) # set in canvasResized
 
-        glBindBuffer(GL_ARRAY_BUFFER, self._vbo0)
-        glBufferData(GL_ARRAY_BUFFER, self._vertices, GL_STATIC_DRAW)
-        loc = glGetAttribLocation(self._prog.id, 'aVertex')
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, 0, c_void_p(0))
-        glEnableVertexAttribArray(loc)
-
-        glBindBuffer(GL_ARRAY_BUFFER, self._vbo1)
-        glBufferData(GL_ARRAY_BUFFER, self._texCoords, GL_STATIC_DRAW)
-        loc = glGetAttribLocation(self._prog.id, 'aTexCoord')
-        glVertexAttribPointer(loc, 2, GL_FLOAT, GL_FALSE, 0, c_void_p(0))
-        glEnableVertexAttribArray(loc)
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, self._indices, GL_STATIC_DRAW)
+        self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
+        self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords, GL_STATIC_DRAW)
+        self._prog.setEBO(indices, GL_STATIC_DRAW)
 
         self.update()
 
-        self._prog.unuse()
-
     def __getattr__(self, name):
-        if name in self._properties:
-            return super().__getattribute__('_' + name)
+        if name in Text._properties:
+            return super().__getattr__('_' + name)
         else:
-            raise AttributeError(name)
+            return super().__getattr__(name)
 
     def __setattr__(self, name, value):
-        if name in self._properties:
+        if name in {'pos', 'anchor'}:
             super().__setattr__('_' + name, value)
-            if name in self._uniforms:
-                self._prog.setUniform(*self._uniforms[name], value)
-            else:
-                self.update()
+            self._prog.setUniform('u'+name[0].upper()+name[1:], '2f', value)
+        elif name in Text._properties:
+            super().__setattr__('_' + name, value)
+            self.update()
         else:
             super().__setattr__(name, value)
+
+    def canvasResized(self, size):
+        self._prog.setUniform('uCanvasSize', '2f', size)
 
     def update(self):
         '''Updates texture for the given text, font, color, etc.
@@ -286,7 +400,7 @@ class Text():
         '''
         # tic = dt.datetime.now()
 
-        ratio = QtWidgets.QApplication.screens()[0].devicePixelRatio()
+        ratio = getPixelRatio()
         margin = (np.array(self.margin) * ratio).astype(np.int)
         font = QtGui.QFont('arial', self.fontSize * ratio,
             QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal, self.italic)
@@ -294,6 +408,8 @@ class Text():
         w, h = Text.getSize(self.text, font)
         w += margin[0] + margin[2]
         h += margin[1] + margin[3]
+        if w==0: w += 1
+        if h==0: h += 1
 
         image = QtGui.QPixmap(w, h)
         image.fill(QtGui.QColor(*np.array(self.bgColor)*255))
@@ -312,7 +428,7 @@ class Text():
 
         # toc = (dt.datetime.now() - tic).total_seconds()
 
-        self._prog.setUniform('2f', 'uSize', (w/ratio, h/ratio))
+        self._prog.setUniform('uSize', '2f', (w/ratio, h/ratio))
 
         # texture
         glActiveTexture(GL_TEXTURE0)
@@ -322,137 +438,200 @@ class Text():
             self._texData)
         # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
         # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
-        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
-        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glGenerateMipmap(GL_TEXTURE_2D)
 
         # return toc
 
-    def resizeGL(self, w, h):
-        self._prog.setUniform('2f', 'uWinSize', (w, h))
-
     def draw(self):
         if not self.visible: return
-
-        self._prog.use()
 
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self._tex)
 
+        self._prog.begin()
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
+        self._prog.end()
 
-        self._prog.unuse()
 
+class Rectangle(Item):
+    '''Graphical rectangle with border and fill.'''
 
-class Container:
-    @property
-    def canvas(self):
-        if self._parent is None:
-            raise RuntimeError('No `parent`')
-        else:
-            return self._parent.canvas
+    _vertShader = '''
+        in vec2 aVertex;
 
-    @property
-    def bgColor(self):
-        if self._bgColor is not None:
-            return self._bgColor
-        elif self._parent is None:
-            raise RuntimeError('No `parent`')
-        else:
-            return self._parent.bgColor
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uBorderWidth; // pixels
+        uniform float uPixelRatio;
 
-    @property
-    def fgColor(self):
-        if self._fgColor is not None:
-            return self._fgColor
-        elif self._parent is None:
-            raise RuntimeError('No `parent`')
-        else:
-            return self._parent.fgColor
+        void main() {
+            vec2 marginOffset = uMargin.xw / uCanvasSize;
+            vec2 marginSize = (uMargin.xy + uMargin.zw) / uCanvasSize;
 
-    def __init__(self, parent=None, untPos=(0,0), untSize=(1,1),
-            pxlMargin=(0,0,0,0), bgColor=None, fgColor=None, **kwargs):
-        '''
-        Args:
-            untPos (2 floats): Container position in unit parent space: (x, y).
-            untSize (2 floats): Container size in unit parent space: (w, h).
-            pxlMargin (4 floats): Margin in pixels: (l, t, r, b).
-            bgColor (3 floats): Backgoround color. If None,
-                defaults to parent.bgColor.
-            fgColor (3 floats): Foreground color for border and texts. If None,
-                defaults to parent.fgColor.
+            gl_Position = vec4(
+                aVertex * (uSize - marginSize) * 2
+                + (uPos + marginOffset) * 2
+                - vec2(1),
+                0, 1);
+        }
         '''
 
-        # allow multiple inheritance and mixing with other classes
+    _fragShader = '''
+        out vec4 FragColor;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uBorderWidth; // pixels
+        uniform float uPixelRatio;
+        uniform vec4  uBgColor;
+        uniform vec4  uFgColor;
+
+        bool between(float a, float b, float c) {
+            return a <= b && b < c;
+        }
+
+        void main() {
+            vec4 rect = vec4(uPos * uCanvasSize + uMargin.xw,
+                (uPos + uSize) * uCanvasSize - uMargin.zy).xwzy;
+            // high DPI display support
+            vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
+            if (between(rect.x, fragCoord.x, rect.z) &&
+                    (between(-uBorderWidth, fragCoord.y-rect.y, 0) ||
+                    between(0, fragCoord.y-rect.w, uBorderWidth)) ||
+                    between(rect.w, fragCoord.y, rect.y) &&
+                    (between(0, fragCoord.x-rect.x, uBorderWidth) ||
+                    between(-uBorderWidth, fragCoord.x-rect.z, 0)))
+                FragColor = uFgColor;
+            else
+                FragColor = uBgColor;
+        }
+        '''
+
+    _uniforms = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+        margin=('uMargin', '4f'), borderWidth=('uBorderWidth', '1f'),
+        bgColor=('uBgColor', '4f'), fgColor=('uFgColor', '4f'))
+
+    _properties = dict(borderWidth=1)
+
+    def __init__(self, **kwargs):
+        '''
+        '''
+
+        self._initProperties(Rectangle._properties, kwargs)
         super().__init__(**kwargs)
 
-        self._parent    = parent
-        self._untPos    = np.array(untPos)
-        self._untSize   = np.array(untSize)
-        self._pxlMargin = np.array(pxlMargin)
-        self._pxlPos    = np.array([0, 0])
-        self._pxlSize   = np.array([1, 1])
-        self._bgColor   = bgColor
-        self._fgColor   = fgColor
-        self._items     = []
+        vertices = np.array([
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 0],
+            ], dtype=np.float32)
 
-        if parent is not None:
-            parent.addItem(self)
+        self._indices = np.array([
+            [0, 1, 2],
+            [0, 2, 3],
+            ], dtype=np.uint32)
 
-    def _callItems(self, func, *args, **kwargs):
-        for item in self._items:
-            if hasattr(item, func):
-                getattr(item, func)(*args, **kwargs)
+        self._prog = Program(vert=self._vertShader,
+                             frag=self._fragShader)
 
-    def addItem(self, item):
-        # if not isinstance(item, Container):
-        #     raise TypeError('`item` should be a Container')
+        for name, value in Rectangle._uniforms.items():
+            self._prog.setUniform(*value, getattr(self, name))
+        # high DPI display support
+        self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
 
-        self._items += [item]
+        self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
+        self._prog.setEBO(self._indices, GL_STATIC_DRAW)
 
-    def on_resize(self, *args, **kwargs):
-        parent = self._parent
+    def __getattr__(self, name):
+        if name in Rectangle._properties:
+            return super().__getattr__('_' + name)
+        else:
+            return super().__getattr__(name)
 
-        self._pxlPos = (parent._pxlPos + self._untPos * (parent._pxlSize
-            - parent._pxlMargin[0:2] - parent._pxlMargin[2:4])
-            + parent._pxlMargin[0:2])
-        self._pxlSize = self._untSize * (parent._pxlSize
-            - parent._pxlMargin[0:2] - parent._pxlMargin[2:4])
+    def __setattr__(self, name, value):
+        if name in Rectangle._uniforms:
+            super().__setattr__('_' + name, value)
+            self._prog.setUniform(*Rectangle._uniforms[name], value)
+        else:
+            super().__setattr__(name, value)
 
-        self._callItems('on_resize', *args, **kwargs)
+    def canvasResized(self, size):
+        self._prog.setUniform('uCanvasSize', '2f', size)
 
-    _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
-        'on_mouse_release', 'on_key_release', 'draw']
-    for func in _funcs:
-        exec('def %(func)s(self, *args, **kwargs):\n'
-            '    self._callItems("%(func)s", *args, **kwargs)' % {'func':func})
+    def draw(self):
+        if not self.visible: return
+
+        self._prog.begin()
+        glDrawElements(GL_TRIANGLES, self._indices.size,
+            GL_UNSIGNED_INT, c_void_p(0))
+        self._prog.end()
 
 
-class Canvas(QtWidgets.QOpenGLWidget):
-    def __init__(self, parent):
-        super().__init__(parent)
+class Canvas(Item, QtWidgets.QOpenGLWidget):
+    @property
+    def canvas(self):
+        return self
 
-        self._bg = (1, 1, 1, 1)
+    # properties with their default values
+    _properties = dict(bgColor=(1,1,1,1))
+
+    def __init__(self, **kwargs):
+        self._initProperties(Canvas._properties, kwargs)
+
+        super().__init__(**kwargs)
 
         self.setMinimumSize(640, 480)
 
-        self._items = []
+        self._drawTimes     = []    # keep last draw times for measuring FPS
+        self._drawDurations = []
+        self._startTime     = dt.datetime.now()
 
-        self._updateTimes = []    # keep last update times for measuring FPS
-        self._startTime   = dt.datetime.now()
+        self._timerDraw = QtCore.QTimer()
+        self._timerDraw.timeout.connect(self.update)
+        self._timerDraw.setInterval(1000/60)
+        self._timerDraw.start()
 
-        self._timer = QtCore.QTimer()
-        self._timer.timeout.connect(self.update)
-        self._timer.setInterval(1000/60)
-        self._timer.start()
+        self._timerStats = QtCore.QTimer()
+        self._timerStats.timeout.connect(self.updateStats)
+        self._timerStats.setInterval(100)
+
+    def __setattr__(self, name, value):
+        if name == 'bgColor':
+            super().__setattr__('_' + name, value)
+            self.makeCurrent()
+            glClearColor(*value)
+        else:
+            super().__setattr__(name, value)
+
+    def updateStats(self):
+        drawTime = np.mean(self._drawTimes)
+        fps = 1/drawTime if drawTime else 0
+        self._fps = fps
+
+        drawDuration = np.mean(self._drawDurations)
+        self._stats.text = '%.1f Hz\n%.1f μs' % (fps, drawDuration*1e6)
 
     def initializeGL(self):
-        self._text1 = Text(text='Hello GL', pos=(.5,.5), fontSize=100,
-            fgColor=(0,0,.3,1))
-        self._fpsText = Text(text='0', pos=(0, 1), anchor=(0, 1),
-            fgColor=(0,0,.3,1), margin=(2,2,2,2), fontSize=8, bold=True)
-        self._items += [self._text1, self._fpsText]
+        self._text = Text(parent=self, text='Hello GL', pos=(.5,1),
+            anchor=(.5,1), margin=(0,30,0,0), fontSize=50, fgColor=self.fgColor)
+        self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
+            fgColor=self.fgColor, margin=(2,)*4, fontSize=8, bold=True,
+            align=QtCore.Qt.AlignLeft)
+
+        Rectangle(parent=self, pos=(.25,.25), size=(.5,.5), margin=(0,)*4,
+            borderWidth=1, fgColor=self.fgColor)
+        Rectangle(parent=self, pos=(.25,.25), size=(.5,.5), margin=(4,)*4,
+            borderWidth=2, bgColor=(0,0,.5,.2), fgColor=self.fgColor)
+
+        Rectangle(parent=self, pos=(0,0), size=(1,1), margin=(0,)*4,
+            borderWidth=2, fgColor=self.fgColor)
 
         # glClearDepth(1.0)
         # glDepthFunc(GL_LESS)
@@ -460,31 +639,175 @@ class Canvas(QtWidgets.QOpenGLWidget):
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         # glShadeModel(GL_SMOOTH)
-        glClearColor(*self._bg)
+        glClearColor(*self.bgColor)
+
+        self._timerStats.start()
 
     def resizeGL(self, w, h):
-        for item in self._items:
-            item.resizeGL(w, h)
+        self._pxlPos = (0, 0)
+        self._pxlSize = (w, h)
+        self.callItems('canvasResized', (w, h))
 
     def paintGL(self):
-        if hasattr(self, '_updateLast'):
-            updateTime = (dt.datetime.now() -
-                self._updateLast).total_seconds()
-            self._updateTimes.append(updateTime)
-            if len(self._updateTimes)>60:
-                self._updateTimes.pop(0)
-            updateMean = np.mean(self._updateTimes)
-            fps = 1/updateMean if updateMean else 0
-            self._fps = fps
-            self._fpsText.text = '%.1f' % fps
-        self._updateLast = dt.datetime.now()
+        if hasattr(self, '_drawLast'):
+            drawTime = (dt.datetime.now() - self._drawLast).total_seconds()
+            self._drawTimes.append(drawTime)
+            if len(self._drawTimes)>60: self._drawTimes.pop(0)
+        self._drawLast = dt.datetime.now()
 
         glClear(GL_COLOR_BUFFER_BIT) # | GL_DEPTH_BUFFER_BIT)
 
-        for item in self._items:
-            item.draw()
+        self.callItems('draw')
 
         glFlush()
+
+        drawDuration = (dt.datetime.now() - self._drawLast).total_seconds()
+        self._drawDurations.append(drawDuration)
+        if len(self._drawDurations)>180: self._drawDurations.pop(0)
+
+
+class Generator(pipeline.Sampled):
+    @property
+    def paused(self):
+        return not self._continueEvent.isSet()
+
+    def __init__(self, fs, channels, **kwargs):
+        self._ns = 0
+        self._thread = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._continueEvent = threading.Event()
+
+        super().__init__(fs=fs, channels=channels, **kwargs)
+
+    def _addSources(self, sources):
+        raise RuntimeError('Cannot add source for a Generator')
+
+    def _loop(self):
+        start = dt.datetime.now()
+        pauseTS = 0
+
+        while True:
+            time.sleep(.01)
+            if not self._continueEvent.isSet():
+                pause = dt.datetime.now()
+                self._continueEvent.wait()
+                pauseTS += (dt.datetime.now()-pause).total_seconds()
+            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
+            ns = int(ts * self._fs)
+            data = self._gen(self._ns, ns)
+            super().write(data, self)
+            self._ns = ns
+
+    def _gen(self, ns1, ns2):
+        raise NotImplementedError()
+
+    def start(self):
+        self._continueEvent.set()
+        if not self._thread.isAlive():
+            self._thread.start()
+
+    def pause(self):
+        self._continueEvent.clear()
+
+    def write(self, data, source):
+        raise RuntimeError('Cannot write to a Generator')
+
+
+class SineGenerator(Generator):
+    def __init__(self, fs, channels, noisy=True, **kwargs):
+        # randomized channel parameters
+        self._phases = np.random.uniform(0  , np.pi, (channels,1))
+        self._freqs  = np.random.uniform(1  , 5    , (channels,1))
+        self._amps   = np.random.uniform(.05, .5   , (channels,1))
+        self._amps2  = np.random.uniform(.05, .2   , (channels,1))
+        if not noisy:
+            self._amps2 *= 0
+
+        super().__init__(fs=fs, channels=channels, **kwargs)
+
+    def _gen(self, ns1, ns2):
+        # generate data as a (channels, ns) array.
+        return (self._amps * np.sin(2 * np.pi * self._freqs
+            * np.arange(ns1, ns2) / self._fs + self._phases)
+            + self._amps2 * np.random.randn(self._channels, ns2-ns1))
+
+
+class SpikeGenerator(Generator):
+    def _gen(self, ns1, ns2):
+        data = .1*np.random.randn(self._channels, ns2-ns1)
+        dt = (ns2-ns1)/self._fs
+
+        counts = np.random.uniform(0, dt*1000/30, self._channels)
+        counts = np.round(counts).astype(np.int)
+
+        for channel in range(self._channels):
+            for i in range(counts[channel]):
+                # random spike length, amplitude, and location
+                length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
+                amp    = np.random.uniform(.3, 1)
+                at     = int(np.random.uniform(0, data.shape[1]-length))
+                spike  = -amp*sp.signal.gaussian(length, length/7)
+                data[channel, at:at+length] += spike
+
+        return data
+
+
+class SpikeDetector(pipeline.Sampled):
+    def __init__(self, tl=4, th=20, spikeDuration=2e-3, **kwargs):
+        '''
+        Args:
+            tl (float): Lower detection threshold
+            th (float): Higher detection threshold
+            spikeDuration (float): Spike window duration
+        '''
+        self._tl            = tl
+        self._th            = th
+        self._spikeDuration = spikeDuration
+        self._spikeLength   = None
+        self._buffer        = None
+        self._sd            = None
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params, sinkParams):
+        self._spikeLength         = int(self._spikeDuration*params['fs'])
+        sinkParams['spikeLength'] = self._spikeLength
+
+        super()._configured(params, sinkParams)
+
+        self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
+
+    def _written(self, data, source):
+        self._buffer.write(data)
+
+        nsRead      = self._buffer.nsRead
+        nsAvailable = self._buffer.nsAvailable
+
+        if (nsRead<self._fs*5 and nsAvailable>self._fs
+                or nsRead>self.fs*5 and nsAvailable>self._fs*5):
+            self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
+
+        # do not detect spikes until enough samples are available for
+        # calculating standard deviation of noise
+        if self._sd is None: return
+
+        windowHalf  = self._spikeLength/2
+        windowStart = int(np.floor(windowHalf))
+        windowStop  = int(np.ceil(windowHalf))
+        dataOut     = [None]*self._channels
+
+        # TODO: append last half window samples of previous data to current data
+        for i in range(self._channels):
+            dataOut[i] = []
+
+            peaks, _ = sp.signal.find_peaks(-data[i],
+                height=(self._tl*self._sd, self._th*self._sd),
+                distance=windowHalf)
+            for peak in peaks:
+                if 0 <= peak-windowStart and peak+windowStop < len(data[i]):
+                    dataOut[i] += [data[i,peak-windowStart:peak+windowStop]]
+
+        super()._written(dataOut, source)
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -494,7 +817,7 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle('OpenGL Demo')
         self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
-        self.canvas = Canvas(self)
+        self.canvas = Canvas(bgColor=(0,1,1,1), fgColor=(0,0,.4,1))
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
@@ -504,7 +827,13 @@ class MainWindow(QtWidgets.QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Space:
-            print('Space pressed')
+            # print('Space pressed')
+            if self.canvas._text1.fontSize > 150:
+                self.canvas._text1._step = -5
+            if self.canvas._text1.fontSize < 20 or \
+                    not hasattr(self.canvas._text1, '_step'):
+                self.canvas._text1._step = +5
+            self.canvas._text1.fontSize += self.canvas._text1._step
 
 
 if __name__ == '__main__':
