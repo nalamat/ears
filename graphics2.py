@@ -7,7 +7,15 @@ Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
 Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
-# note: GL color range is 0-1, Qt color range is 0-255
+# notes:
+# - GL color range is 0-1, Qt color range is 0-255
+# - Qt window dimensions are normalized by the device pixel ratio, i.e. a
+#   800x600 window looks almost the same on both low and high DPI screens.
+#   this causes an issue that texts drawn with QPainter without adjusting for
+#   pixel ratio will look pixelated on high DPI.
+#   however, OpenGL coordinates in fragment shader are actual pixel values and
+#   must be normalized manually if necessary
+# -
 
 import sys
 import math
@@ -56,9 +64,10 @@ defaultColors = np.array([
     ])
 
 
-# used for high DPI display support
-# e.g. retina displays have a pixel ratio of 2.0
 def getPixelRatio():
+    '''Use for high DPI display support.
+    For example, retina displays have a pixel ratio of 2.0.
+    '''
     return QtWidgets.QApplication.screens()[0].devicePixelRatio()
 
 
@@ -178,18 +187,12 @@ class Program:
 
 class Item:
     '''Graphical item capable of containing child items.'''
-    # `parent` needs to be defined out of __getattr__ to override
-    # QOpenGLWidget's property
-    @property
-    def parent(self):
-        return self._parent
-
     @property
     def canvas(self):
         if self.parent:
             return self.parent.canvas
         else:
-            raise RuntimeError('No `parent`')
+            return None
 
     # properties with their default values
     _properties = dict(parent=None, pos=(0,0), size=(1,1), margin=(0,0,0,0),
@@ -208,15 +211,15 @@ class Item:
         super().__init__()
         self._initProperties(Item._properties, kwargs)
 
-        # self._pxlPos    = np.array([0, 0])
-        # self._pxlSize   = np.array([1, 1])
+        self._posPxl    = np.array([0, 0])
+        self._sizePxl   = np.array([1, 1])
         self._items     = []
 
         if self.parent:
             self.parent.addItem(self)
 
     def __getattr__(self, name):
-        if name in Item._properties:
+        if name in Item._properties or name in {'posPxl', 'sizePxl'}:
             return super().__getattribute__('_' + name)
         else:
             return super().__getattribute__(name)
@@ -249,17 +252,15 @@ class Item:
             if hasattr(item, func):
                 getattr(item, func)(*args, **kwargs)
 
-    # called by Canvas.resizeGL
-    def canvasResized(self, size):
+    # initally called from Canvas.resizeGL
+    def parentResized(self):
         parent = self.parent
+        margin = np.array(self.margin)
 
-        self._pxlPos = (parent._pxlPos + self._pos * (parent._pxlSize
-            - parent.margin[0:2] - parent.margin[2:4])
-            + parent.margin[0:2])
-        self._pxlSize = self._size * (parent._pxlSize
-            - parent.margin[0:2] - parent.margin[2:4])
+        self._posPxl = self.pos * parent.sizePxl + parent.posPxl + margin[[0,3]]
+        self._sizePxl = self.size * parent.sizePxl - margin[0:2] - margin[2:4]
 
-        self.callItems('canvasResized', size)
+        self.callItems('parentResized')
 
     _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
         'on_mouse_release', 'on_key_release', 'draw']
@@ -367,7 +368,8 @@ class Text(Item):
         self._prog.setUniform('uPos', '2f', self.pos)
         self._prog.setUniform('uAnchor', '2f', self.anchor)
         self._prog.setUniform('uSize', '2f', (0,0)) # set in update
-        self._prog.setUniform('uCanvasSize', '2f', (0,0)) # set in canvasResized
+        self._prog.setUniform('uCanvasSize', '2f',
+            self.canvas.sizePxl if self.canvas else (0,0))
 
         self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
         self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords, GL_STATIC_DRAW)
@@ -391,8 +393,9 @@ class Text(Item):
         else:
             super().__setattr__(name, value)
 
-    def canvasResized(self, size):
-        self._prog.setUniform('uCanvasSize', '2f', size)
+    def parentResized(self):
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+        super().parentResized()
 
     def update(self):
         '''Updates texture for the given text, font, color, etc.
@@ -454,6 +457,8 @@ class Text(Item):
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
         self._prog.end()
 
+        super().draw()
+
 
 class Rectangle(Item):
     '''Graphical rectangle with border and fill.'''
@@ -463,20 +468,22 @@ class Rectangle(Item):
 
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
-        uniform vec4  uMargin;      // pixels
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
         uniform vec2  uCanvasSize;  // pixels
-        uniform float uBorderWidth; // pixels
-        uniform float uPixelRatio;
 
         void main() {
-            vec2 marginOffset = uMargin.xw / uCanvasSize;
-            vec2 marginSize = (uMargin.xy + uMargin.zw) / uCanvasSize;
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
 
-            gl_Position = vec4(
-                aVertex * (uSize - marginSize) * 2
-                + (uPos + marginOffset) * 2
-                - vec2(1),
-                0, 1);
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4( (aVertex * size + pos) * 2 - vec2(1), 0, 1);
         }
         '''
 
@@ -485,9 +492,11 @@ class Rectangle(Item):
 
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
-        uniform vec4  uMargin;      // pixels
-        uniform vec2  uCanvasSize;  // pixels
+        uniform vec4  uMargin;      // pixels: l t r b
         uniform float uBorderWidth; // pixels
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
         uniform float uPixelRatio;
         uniform vec4  uBgColor;
         uniform vec4  uFgColor;
@@ -497,10 +506,14 @@ class Rectangle(Item):
         }
 
         void main() {
-            vec4 rect = vec4(uPos * uCanvasSize + uMargin.xw,
-                (uPos + uSize) * uCanvasSize - uMargin.zy).xwzy;
             // high DPI display support
             vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
+
+            // transform to pixel space
+            vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
+                (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
+
+            // check border
             if (between(rect.x, fragCoord.x, rect.z) &&
                     (between(-uBorderWidth, fragCoord.y-rect.y, 0) ||
                     between(0, fragCoord.y-rect.w, uBorderWidth)) ||
@@ -562,8 +575,14 @@ class Rectangle(Item):
         else:
             super().__setattr__(name, value)
 
-    def canvasResized(self, size):
-        self._prog.setUniform('uCanvasSize', '2f', size)
+    def parentResized(self):
+        # print('Setting:')
+        # print(self.parent.posPxl, self.parent.sizePxl, self.canvas.sizePxl)
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+        super().parentResized()
 
     def draw(self):
         if not self.visible: return
@@ -573,11 +592,194 @@ class Rectangle(Item):
             GL_UNSIGNED_INT, c_void_p(0))
         self._prog.end()
 
+        super().draw()
+
+
+class Figure(Item):
+    @property
+    def zoom(self):
+        return self._zoom
+
+    @zoom.setter
+    def zoom(self, zoom):
+        zoom = np.array(zoom)
+        zoom = zoom.clip(1, 1000)
+        self._zoom = zoom
+        self._transformView['zoom'] = zoom
+        self.callItems('zoomed')
+        # self.canvas.update()
+
+    @property
+    def pan(self):
+        return self._pan
+
+    @pan.setter
+    def pan(self, pan):
+        # `pan` is normalized in view space
+        panLimits = self._zoom-1
+        pan = np.array(pan)
+        pan = pan.clip(-panLimits, panLimits)
+        self._pan = pan
+        self._transformView['pan'] = pan
+        self.callItems('panned')
+        # self.canvas.update()
+
+    _properties = dict()
+
+    def __init__(self, **kwargs):
+        '''
+        Args:
+            borderWidth (float): Width of the border drawn around figure's view
+                box in pixels. Defaults to 1.
+        '''
+
+        self._initProperties(Figure._properties, kwargs)
+        super().__init__(**kwargs)
+
+        self._pxlViewCenter = np.array([0, 0])
+        self._pxlViewSize   = np.array([1, 1])
+        self._zoom          = np.array([1, 1])
+        self._pan           = np.array([0, 0])
+
+        # setup glsl transformations for child plot items
+        # self._transformView = vp.visuals.shaders.Function('''
+        #     vec2 transform_view(vec2 pos) {
+        #         return $transform(pos, $zoom, $pan);
+        #     }''')
+        # self._transformView['transform'] = _glslTransform
+        # self._transformView['zoom'     ] = self._zoom
+        # self._transformView['pan'      ] = self._pan
+
+        # self._transformFigure = vp.visuals.shaders.Function('''
+        #     vec2 transform_figure(vec2 pos) {
+        #         return $transform(pos,
+        #             $view_size / $figure_size,
+        #             ($margins.xy - $margins.wz) / $figure_size
+        #             * vec2(1,-1));
+        #     }''')
+        # self._transformFigure['transform'] = _glslTransform
+        # self._transformFigure['margins'  ] = self._pxlMargins
+
+        # self._transformCanvas = vp.visuals.shaders.Function('''
+        #     vec2 transform_canvas(vec2 pos) {
+        #         return $transform(pos,
+        #             $figure_size / $canvas_size,
+        #             (($figure_pos + $figure_size/2) * 2 / $canvas_size - 1)
+        #             * vec2(1,-1));
+        #     }''')
+        # self._transformCanvas['transform'] = _glslTransform
+
+        # a border around the figure
+        self._rect = Rectangle(parent=self, pos=(0,0), size=(1,1),
+            borderWidth=self.borderWidth, bgColor=self.bgColor,
+            fgColor=self.fgColor)
+
+    def _pxl2nrmView(self, pxlDelta):
+        # translate a delta (dx, dy) from pixels to normalized in view space
+        # mainly used for panning
+        return pxlDelta * 2 / self._pxlViewSize * [1, -1]
+
+    def on_resize(self, event):
+        parent = self._parent
+
+        self._pxlPos = (parent._pxlPos + self._untPos * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+            + parent._pxlMargins[0:2])
+        self._pxlSize = self._untSize * (parent._pxlSize
+            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
+
+        self._pxlViewCenter = self._pxlPos + (self._pxlSize
+            + self._pxlMargins[0:2] - self._pxlMargins[2:4])/2
+        self._pxlViewSize   = (self._pxlSize - self._pxlMargins[0:2] -
+            self._pxlMargins[2:4])
+
+        self._visuals.transforms.configure(canvas=self.canvas,
+            viewport=self.canvas.viewport)
+        # self._border.transforms.configure(canvas=self.canvas,
+        #     viewport=self.canvas.viewport)
+        self._border.pos     = self._pxlViewCenter
+        self._border.halfdim = self._pxlViewSize/2
+
+        self._transformFigure['view_size'  ] = self._pxlViewSize
+        self._transformFigure['figure_size'] = self._pxlSize
+
+        self._transformCanvas['figure_pos' ] = self._pxlPos
+        self._transformCanvas['figure_size'] = self._pxlSize
+        self._transformCanvas['canvas_size'] = self.canvas.size
+
+        self._callItems('on_resize', event)
+
+    def on_mouse_wheel(self, event):
+        if not self.isInside(event.pos): return
+
+        scale = event.delta[0] if event.delta[0] else event.delta[1]
+        scale = math.exp(scale * .15)
+        if 'Control' in event.modifiers:    # both x and y zoom
+            scale = np.array([scale, scale])
+        elif 'Shift' in event.modifiers:
+            scale = np.array([scale, 1])    # only x zoom
+        elif 'Alt' in event.modifiers:
+            scale = np.array([1, scale])    # only y zoom
+        else:
+            return                          # no zoom
+
+        zoom = self.zoom
+        self.zoom = zoom * scale
+        scale = self.zoom / zoom
+        delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
+        self.pan = delta * (1 - scale) + self.pan * scale
+
+        super().on_mouse_wheel(self, event)
+
+    def on_mouse_press(self, event):
+        if not self.isInside(event.pos): return
+
+        if (event.button == 1 and 'Control' in event.modifiers):
+            # start pan
+            event.figure = self
+            event.pan    = self.pan
+
+    def on_mouse_move(self, event):
+        if (event.press_event and hasattr(event.press_event, 'figure')
+                and event.press_event.figure == self
+                and event.press_event.button == 1
+                and 'Control' in event.press_event.modifiers):
+            # pan
+            delta = self._pxl2nrmView(event.pos - event.press_event.pos)
+            self.pan = event.press_event.pan + delta
+
+    def on_mouse_release(self, event):
+        if (event.press_event and hasattr(event.press_event, 'figure')
+                and event.press_event.figure == self
+                and event.press_event.button == 1
+                and 'Control' in event.press_event.modifiers):
+            # stop pan
+            delta = self._pxl2nrmView(event.pos-event.press_event.pos)
+            self.pan = event.press_event.pan + delta
+
+    def on_key_release(self, event):
+        if 'Control' in event.modifiers and event.key == '0':
+            self.zoom = [1, 1]
+            self.pan  = [0, 0]
+
+    def isInside(self, pxl):
+        return ((self._pxlPos < pxl) & (pxl < self._pxlPos+self._pxlSize)).all()
+
+    def draw(self):
+        super().draw()
+        self._visuals.draw()
+
 
 class Canvas(Item, QtWidgets.QOpenGLWidget):
     @property
     def canvas(self):
         return self
+
+    # `parent` needs to be defined out of __getattr__ to override
+    # QOpenGLWidget's property
+    @property
+    def parent(self):
+        return self._parent
 
     # properties with their default values
     _properties = dict(bgColor=(1,1,1,1))
@@ -619,19 +821,18 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._stats.text = '%.1f Hz\n%.1f μs' % (fps, drawDuration*1e6)
 
     def initializeGL(self):
+        # initialize graphical items here
         self._text = Text(parent=self, text='Hello GL', pos=(.5,1),
             anchor=(.5,1), margin=(0,30,0,0), fontSize=50, fgColor=self.fgColor)
         self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
             fgColor=self.fgColor, margin=(2,)*4, fontSize=8, bold=True,
             align=QtCore.Qt.AlignLeft)
 
-        Rectangle(parent=self, pos=(.25,.25), size=(.5,.5), margin=(0,)*4,
-            borderWidth=1, fgColor=self.fgColor)
-        Rectangle(parent=self, pos=(.25,.25), size=(.5,.5), margin=(4,)*4,
-            borderWidth=2, bgColor=(0,0,.5,.2), fgColor=self.fgColor)
-
-        Rectangle(parent=self, pos=(0,0), size=(1,1), margin=(0,)*4,
-            borderWidth=2, fgColor=self.fgColor)
+        rect = Rectangle(parent=self, pos=(.25,.25), size=(.5,.5),
+            margin=(0,)*4, borderWidth=1, fgColor=self.fgColor)
+        for i in range(60):
+            rect = Rectangle(parent=rect, pos=(.03,.03), size=(.94,.94),
+                fgColor=self.fgColor)
 
         # glClearDepth(1.0)
         # glDepthFunc(GL_LESS)
@@ -644,9 +845,9 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._timerStats.start()
 
     def resizeGL(self, w, h):
-        self._pxlPos = (0, 0)
-        self._pxlSize = (w, h)
-        self.callItems('canvasResized', (w, h))
+        self._posPxl = np.array([0, 0])
+        self._sizePxl = np.array([w, h])
+        self.callItems('parentResized')
 
     def paintGL(self):
         if hasattr(self, '_drawLast'):
