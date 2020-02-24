@@ -43,25 +43,25 @@ sizeFloat = sizeof(c_float)
 glVersion = (4, 1)
 
 defaultColors = np.array([
-    [0 , 0,  .3],    # 1
-    [0 , 0 , .6],    # 2
-    [0 , 0 , 1 ],    # 3
-    [0 , .3, 1 ],    # 4
-    [0 , .6, 1 ],    # 5
-    [0 , .6, .6],    # 6
-    [0 , .3, 0 ],    # 7
-    [0 , .6, 0 ],    # 8
-    [0 , 1 , 0 ],    # 9
-    [.5, .6, 0 ],    # 10
-    [1 , .6, 0 ],    # 11
-    [.3, 0 , 0 ],    # 12
-    [.6, 0 , 0 ],    # 13
-    [1 , 0 , 0 ],    # 14
-    [1 , 0 , .3],    # 15
-    [1 , 0 , .6],    # 16
-    [.6, 0 , .6],    # 17
-    [.6, 0 , 1 ],    # 18
-    ])
+    [0 , 0,  .3, 1],    # 1
+    [0 , 0 , .6, 1],    # 2
+    [0 , 0 , 1 , 1],    # 3
+    [0 , .3, 1 , 1],    # 4
+    [0 , .6, 1 , 1],    # 5
+    [0 , .6, .6, 1],    # 6
+    [0 , .3, 0 , 1],    # 7
+    [0 , .6, 0 , 1],    # 8
+    [0 , .9, 0 , 1],    # 9
+    [.5, .6, 0 , 1],    # 10
+    [1 , .6, 0 , 1],    # 11
+    [.3, 0 , 0 , 1],    # 12
+    [.6, 0 , 0 , 1],    # 13
+    [1 , 0 , 0 , 1],    # 14
+    [1 , 0 , .3, 1],    # 15
+    [1 , 0 , .6, 1],    # 16
+    [.6, 0 , .6, 1],    # 17
+    [.6, 0 , 1 , 1],    # 18
+    ], dtype=np.float32)
 
 
 def getPixelRatio():
@@ -278,14 +278,19 @@ class Text(Item):
 
         out vec2 TexCoord;
 
-        uniform vec2 uPos;        // unit
-        uniform vec2 uAnchor;     // unit
-        uniform vec2 uSize;       // pixels
-        uniform vec2 uCanvasSize; // pixels
+        uniform vec2  uPos;         // unit
+        uniform vec2  uAnchor;      // unit
+        uniform vec2  uSize;        // pixels
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
 
         void main() {
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize / uCanvasSize;
+
             gl_Position = vec4(
-                (aVertex-uAnchor)*2*uSize/uCanvasSize + uPos*2 - vec2(1,1),
+                ((aVertex - uAnchor) * size + pos) * 2 - vec2(1),
                 0, 1);
             TexCoord = aTexCoord;
         }
@@ -394,15 +399,16 @@ class Text(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
         self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
         super().parentResized()
 
     def update(self):
         '''Updates texture for the given text, font, color, etc.
         Note: This function does not force redrawing of the text on screen.
         '''
-        # tic = dt.datetime.now()
-
         ratio = getPixelRatio()
         margin = (np.array(self.margin) * ratio).astype(np.int)
         font = QtGui.QFont('arial', self.fontSize * ratio,
@@ -427,25 +433,18 @@ class Text(Item):
         painter.end()
         image = image.toImage()
         s = image.bits().asstring(w * h * 4)
-        self._texData = np.frombuffer(s, dtype=np.uint8).reshape((h, w, 4))
-
-        # toc = (dt.datetime.now() - tic).total_seconds()
+        texData = np.frombuffer(s, dtype=np.uint8).reshape((h, w, 4))
 
         self._prog.setUniform('uSize', '2f', (w/ratio, h/ratio))
 
         # texture
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self._tex)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, self._texData.shape[1],
-            self._texData.shape[0], 0, GL_BGRA, GL_UNSIGNED_BYTE,
-            self._texData)
-        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_MIRRORED_REPEAT);
-        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_MIRRORED_REPEAT);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.shape[1],
+            texData.shape[0], 0, GL_BGRA, GL_UNSIGNED_BYTE, texData)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        # glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glGenerateMipmap(GL_TEXTURE_2D)
-
-        # return toc
 
     def draw(self):
         if not self.visible: return
@@ -576,8 +575,6 @@ class Rectangle(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        # print('Setting:')
-        # print(self.parent.posPxl, self.parent.sizePxl, self.canvas.sizePxl)
         self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
         self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
         self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
@@ -624,22 +621,16 @@ class Figure(Item):
         self.callItems('panned')
         # self.canvas.update()
 
-    _properties = dict()
+    _properties = dict(borderWidth=2, zoom=(1,1),
+        pan=(0,0))
 
     def __init__(self, **kwargs):
         '''
-        Args:
-            borderWidth (float): Width of the border drawn around figure's view
-                box in pixels. Defaults to 1.
         '''
 
         self._initProperties(Figure._properties, kwargs)
         super().__init__(**kwargs)
 
-        self._pxlViewCenter = np.array([0, 0])
-        self._pxlViewSize   = np.array([1, 1])
-        self._zoom          = np.array([1, 1])
-        self._pan           = np.array([0, 0])
 
         # setup glsl transformations for child plot items
         # self._transformView = vp.visuals.shaders.Function('''
@@ -670,44 +661,22 @@ class Figure(Item):
         # self._transformCanvas['transform'] = _glslTransform
 
         # a border around the figure
-        self._rect = Rectangle(parent=self, pos=(0,0), size=(1,1),
+        self._view = Rectangle(parent=self, pos=(0,0), size=(1,1),
             borderWidth=self.borderWidth, bgColor=self.bgColor,
             fgColor=self.fgColor)
+
+        self._plot = AnalogPlot(parent=self._view, margin=(self.borderWidth,)*4)
+
+    def __getattr__(self, name):
+        if name in Figure._properties:
+            return super().__getattr__('_' + name)
+        else:
+            return super().__getattr__(name)
 
     def _pxl2nrmView(self, pxlDelta):
         # translate a delta (dx, dy) from pixels to normalized in view space
         # mainly used for panning
         return pxlDelta * 2 / self._pxlViewSize * [1, -1]
-
-    def on_resize(self, event):
-        parent = self._parent
-
-        self._pxlPos = (parent._pxlPos + self._untPos * (parent._pxlSize
-            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
-            + parent._pxlMargins[0:2])
-        self._pxlSize = self._untSize * (parent._pxlSize
-            - parent._pxlMargins[0:2] - parent._pxlMargins[2:4])
-
-        self._pxlViewCenter = self._pxlPos + (self._pxlSize
-            + self._pxlMargins[0:2] - self._pxlMargins[2:4])/2
-        self._pxlViewSize   = (self._pxlSize - self._pxlMargins[0:2] -
-            self._pxlMargins[2:4])
-
-        self._visuals.transforms.configure(canvas=self.canvas,
-            viewport=self.canvas.viewport)
-        # self._border.transforms.configure(canvas=self.canvas,
-        #     viewport=self.canvas.viewport)
-        self._border.pos     = self._pxlViewCenter
-        self._border.halfdim = self._pxlViewSize/2
-
-        self._transformFigure['view_size'  ] = self._pxlViewSize
-        self._transformFigure['figure_size'] = self._pxlSize
-
-        self._transformCanvas['figure_pos' ] = self._pxlPos
-        self._transformCanvas['figure_size'] = self._pxlSize
-        self._transformCanvas['canvas_size'] = self.canvas.size
-
-        self._callItems('on_resize', event)
 
     def on_mouse_wheel(self, event):
         if not self.isInside(event.pos): return
@@ -765,9 +734,130 @@ class Figure(Item):
     def isInside(self, pxl):
         return ((self._pxlPos < pxl) & (pxl < self._pxlPos+self._pxlSize)).all()
 
+
+class AnalogPlot(Item):
+    _vertShader = '''
+        in float aVertex;
+
+        out float fChannel;
+
+        uniform vec2  uPos;
+        uniform vec2  uSize;
+        uniform vec4  uMargin;
+        uniform vec2  uParentPos;
+        uniform vec2  uParentSize;
+        uniform vec2  uCanvasSize;
+        uniform float uTsRange;
+        uniform float uChannels;
+        uniform float uFs;
+
+        void main() {
+            float count = int(uTsRange * uFs);
+            float channel = int(gl_VertexID / count);
+            vec2 vertex = vec2((gl_VertexID % int(count)) / (count - 1),
+                ((aVertex + 1) / 2 + uChannels - 1 - channel) / uChannels);
+
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            vertex = (vertex * size + pos) * 2 - vec2(1);
+
+            gl_Position = vec4(vertex, 0, 1);
+            fChannel = channel;
+        }
+        '''
+
+    _fragShader = '''
+        #define MAX_CHANNELS 128
+
+        in float fChannel;
+        out vec4 FragColor;
+
+        uniform vec4  uColor[MAX_CHANNELS];
+
+        void main() {
+            if (0 < fract(fChannel)) discard;
+            FragColor = uColor[int(fChannel)];
+        }
+        '''
+
+    _uniforms = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+        margin=('uMargin', '4f'))
+
+    _properties = dict()
+
+    def __init__(self, **kwargs):
+        self._initProperties(AnalogPlot._properties, kwargs)
+        super().__init__(**kwargs)
+
+
+        self._tsRange = 20
+        self._channels = 16
+        self._fs = 31.25e3
+
+        indices = np.array([np.arange(self._fs*self._tsRange)]*self._channels)
+        self._vertices = np.sin(indices/self._fs*2*np.pi).astype(np.float32)
+
+        self._prog = Program(vert=self._vertShader,
+                             frag=self._fragShader)
+
+        for name, value in AnalogPlot._uniforms.items():
+            self._prog.setUniform(*value, getattr(self, name))
+        self._prog.setUniform('uTsRange', '1f', self._tsRange)
+        self._prog.setUniform('uChannels', '1f', self._channels)
+        self._prog.setUniform('uFs', '1f', self._fs)
+        self._prog.setUniform('uColor', '4fv', (self._channels, defaultColors))
+
+        self._prog.setVBO('aVertex', GL_FLOAT, 1, self._vertices,
+            GL_DYNAMIC_DRAW)
+
+        self._labels = [None] * self._channels
+        for channel in range(self._channels):
+            self._labels[channel] = Text(parent=self, text=str(channel+1),
+                pos=(0, 1-(channel+.5)/self._channels), anchor=(1,.5),
+                margin=(0,0,3+self.margin[0],0),
+                fontSize=16, bold=True, fgColor=defaultColors[channel])
+
+        self._ticks = [None]*11
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/10)):
+            self._ticks[i] = Text(parent=self, text=str(ts),
+                pos=(ts/self._tsRange, 1), anchor=(.5,0),
+                margin=(0,0,0,3+self.margin[1]),
+                fontSize=10, fgColor=self.fgColor)
+
+    def __getattr__(self, name):
+        if name in AnalogPlot._properties:
+            return super().__getattr__('_' + name)
+        else:
+            return super().__getattr__(name)
+
+    def __setattr__(self, name, value):
+        if name in AnalogPlot._uniforms:
+            super().__setattr__('_' + name, value)
+            self._prog.setUniform(*AnalogPlot._uniforms[name], value)
+        else:
+            super().__setattr__(name, value)
+
+    def parentResized(self):
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+        super().parentResized()
+
     def draw(self):
+        if not self.visible: return
+
+        self._prog.begin()
+        glDrawArrays(GL_LINE_STRIP, 0, self._vertices.size)
+        self._prog.end()
+
         super().draw()
-        self._visuals.draw()
 
 
 class Canvas(Item, QtWidgets.QOpenGLWidget):
@@ -822,23 +912,22 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
     def initializeGL(self):
         # initialize graphical items here
-        self._text = Text(parent=self, text='Hello GL', pos=(.5,1),
-            anchor=(.5,1), margin=(0,30,0,0), fontSize=50, fgColor=self.fgColor)
-        self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
-            fgColor=self.fgColor, margin=(2,)*4, fontSize=8, bold=True,
-            align=QtCore.Qt.AlignLeft)
+        # self._text = Text(parent=self, text='Hello GL', pos=(.5,1),
+        #     anchor=(.5,1), margin=(0,30,0,0), fontSize=50,
+        #     fgColor=self.fgColor)
 
-        rect = Rectangle(parent=self, pos=(.25,.25), size=(.5,.5),
-            margin=(0,)*4, borderWidth=1, fgColor=self.fgColor)
-        for i in range(60):
-            rect = Rectangle(parent=rect, pos=(.03,.03), size=(.94,.94),
-                fgColor=self.fgColor)
+        self._figure = Figure(parent=self, margin=(60,20,20,10))
+
+        item = Item(parent=self, margin=(2,)*4)
+        self._stats = Text(parent=item, text='0', pos=(0,1), anchor=(0,1),
+            fgColor=self.fgColor, fontSize=8, bold=True, margin=(1,)*4,
+            align=QtCore.Qt.AlignLeft)
 
         # glClearDepth(1.0)
         # glDepthFunc(GL_LESS)
         # glEnable(GL_DEPTH_TEST)
         glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
         # glShadeModel(GL_SMOOTH)
         glClearColor(*self.bgColor)
 
@@ -1018,7 +1107,7 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle('OpenGL Demo')
         self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
-        self.canvas = Canvas(bgColor=(0,1,1,1), fgColor=(0,0,.4,1))
+        self.canvas = Canvas()
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
