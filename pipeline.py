@@ -199,7 +199,7 @@ class Node(Route):
     def _writing(self, data, source):
         '''Called when writing new data to the Node and before passing to sinks.
 
-        Child classes can override to verificy and preprocess data.
+        Child classes can override to verify and preprocess data.
 
         When overriding, best to call super function first.
         '''
@@ -755,6 +755,11 @@ class CircularBuffer(Sampled):
         return self._data
 
     @property
+    def duration(self):
+        '''Duration of the underlying buffer along the circular axis.'''
+        return self._duration
+
+    @property
     def size(self):
         '''Size of the underlying buffer along the circular axis.'''
         return self._size
@@ -764,19 +769,28 @@ class CircularBuffer(Sampled):
         '''Shape of the underlying buffer: channels x circular axis size.'''
         return self._data.shape
 
-    def __init__(self, size, **kwargs):
-        if size < 1:            raise ValueError('`size` should be >= 1')
-        if round(size) != size: raise TypeError ('`size` should be an integer')
+    def __init__(self, duration, **kwargs):
+        if duration <= 0:
+            raise ValueError('`duration` should be a number > 0')
 
-        self._size = size
+        self._duration = duration
+        self._size = None
         self._data = None
 
         super().__init__(**kwargs)
 
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        size = int(self.duration * params['fs'])
+        # if round(size) != size:
+        #         raise TypeError ('Total sample count should be an integer')
+
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
 
-        self._data = np.zeros((self._channels, self._size))
+        self._size = int(self.duration * self.fs)
+        self._data = np.zeros((self.channels, self._size))
 
     def _written(self, data, source):
         n    = data.shape[1]

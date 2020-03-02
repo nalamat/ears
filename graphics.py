@@ -707,7 +707,8 @@ class AnalogPlot(Plot, pipeline.Sampled):
             self._fss    [i] = fs
             self._indices[i] = np.arange(self._channels*nsRange).reshape(
                 (self._channels,-1))
-            self._buffers[i] = pipeline.CircularBuffer(size=nsRange)
+            self._buffers[i] = pipeline.CircularBuffer(
+                duration=self._figure.tsRange)
 
             # internal pipeline
             self >> pipeline.DownsampleMinMax(ds=ds) >> self._buffers[i]
