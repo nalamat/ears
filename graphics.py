@@ -451,7 +451,7 @@ class Scope(Figure, pipeline.Sampled):
         '''
         Args:
             tsRange (float): Range of the active time window.
-            tsFade (float): Rage of fading the previous window data.
+            tsFade (float): Range of fading the previous time window data.
         '''
 
         self._tsRange = tsRange
@@ -774,11 +774,11 @@ class AnalogPlot(Plot, pipeline.Sampled):
             text.draw()
 
     def _written(self, data, source):
+        super()._written(data, source)
         with self._lock:
             buffer = self._buffers[self._zoom]
             self._program['u_ns'  ] = buffer.ns
             self._program['a_data'] = buffer.data.astype(np.float32)
-        super()._written(data, source)
 
 
 class EpochPlot(Plot, pipeline.Node):
