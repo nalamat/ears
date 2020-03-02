@@ -230,6 +230,7 @@ class CircularBuffer():
         if at is None:
             at = self._nsWritten
         if at < 0:
+            # TODO: shouldn't this be '+ at'?
             at = self._nsWritten - at
         if at < 0:
             raise IndexError('Cannot write before 0')
@@ -288,7 +289,7 @@ class CircularBuffer():
         # and before the returned data (by reference) is used
         window = self._getWindow(indices)
 
-        # advance number of samples written
+        # advance number of samples read
         if advance:
             self._nsRead = to
 
