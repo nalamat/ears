@@ -119,8 +119,16 @@ class Program:
             return transform(p, vec2(ax, ay), vec2(bx, by));
         }
 
-        float rand(vec2 seed){
+        float rand(vec2 seed) {
             return fract(sin(dot(seed.xy, vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        bool between(float a, float b, float c) {
+            return a <= b && b < c;
+        }
+
+        bool between(int a, int b, int c) {
+            return a <= b && b < c;
         }
         '''
 
@@ -186,14 +194,14 @@ class Program:
         glBindVertexArray(0)
         glUseProgram(0)
 
-    def setUniform(self, name, type, value):
+    def setUniform(self, name, type, value, use=True):
         if not isinstance(value, collections.abc.Iterable): value = (value,)
-        glUseProgram(self.id)
+        if use: glUseProgram(self.id)
         id = glGetUniformLocation(self.id, name)
         globals()['glUniform' + type](id, *value)
-        glUseProgram(0)
+        if use: glUseProgram(0)
 
-    def setVBO(self, name, type, size, data, usage):
+    def setVBO(self, name, type, size, data, usage, use=True):
         '''Copy vertex data to a VBO and link to its vertex attribute.
 
         Args:
@@ -204,21 +212,21 @@ class Program:
             usage (int): Expected usage pattern, e.g. GL_STATIC_DRAW,
                 GL_DYNAMIC_DRAW, GL_STREAM_DRAW
         '''
-        self.begin()
+        if use: self.begin()
         if name not in self.vbos: self.vbos[name] = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbos[name])
         glBufferData(GL_ARRAY_BUFFER, data, usage)
         loc = glGetAttribLocation(self.id, name)
         glVertexAttribPointer(loc, size, type, GL_FALSE, 0, c_void_p(0))
         glEnableVertexAttribArray(loc)
-        self.end()
+        if use: self.end()
 
-    def setEBO(self, data, usage):
-        self.begin()
+    def setEBO(self, data, usage, use=True):
+        if use: self.begin()
         if not self.ebo: self.ebo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, data, usage)
-        self.end()
+        if use: self.end()
 
 
 class Item:
@@ -438,9 +446,11 @@ class Text(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+        self._prog.begin()
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
+        self._prog.end()
 
         super().parentResized()
 
@@ -541,10 +551,6 @@ class Rectangle(Item):
         uniform vec4  uBgColor;
         uniform vec4  uFgColor;
 
-        bool between(float a, float b, float c) {
-            return a <= b && b < c;
-        }
-
         void main() {
             // high DPI display support
             vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
@@ -617,9 +623,11 @@ class Rectangle(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+        self._prog.begin()
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
+        self._prog.end()
 
         super().parentResized()
 
@@ -654,10 +662,6 @@ class Grid(Rectangle):
         uniform float uXTicks[MAX_TICKS]; // unit
         uniform int   uYTickCount;
         uniform float uYTicks[MAX_TICKS]; // unit
-
-        bool between(float a, float b, float c) {
-            return a <= b && b < c;
-        }
 
         void main() {
             // high DPI display support
@@ -837,9 +841,11 @@ class AnalogPlot(Item, pipeline.Sampled):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+        self._prog.begin()
+        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
+        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
+        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
+        self._prog.end()
 
         super().parentResized()
 
@@ -853,7 +859,12 @@ class AnalogPlot(Item, pipeline.Sampled):
         super().draw()
 
 
-class AnalogPlot2(Rectangle, pipeline.Sampled):
+class AnalogPlotTexture(Rectangle, pipeline.Sampled):
+    '''High performance plotting using 3D texture and fragment shader.
+
+    Does not render well with signals that are noisy or have sharp transitions.
+    '''
+
     _fragShader = '''
         out vec4 FragColor;
 
@@ -869,6 +880,7 @@ class AnalogPlot2(Rectangle, pipeline.Sampled):
         uniform vec4  uFgColor;
         uniform int   uTexX;
         uniform int   uTexY;
+        uniform int   uNs;
         uniform int   uNsRange;
         uniform int   uChannels;
         uniform vec4  uColor[{MAX_CHANNELS}];
@@ -895,9 +907,15 @@ class AnalogPlot2(Rectangle, pipeline.Sampled):
             if (abs(texture(uData, texPos).r / 2 / uChannels + 1 - texPos.z
                     - fragPos.y) < 1/(rect.y-rect.w)) {
                 FragColor = uColor[ch % {MAX_COLORS}];
-                return;
+                int nsDiff = ns - uNs % uNsRange;
+                float fade = 1;
+                if (between(0, nsDiff, uNsRange / 5))
+                    fade = nsDiff / (uNsRange / 5.);
+                else if (between(0, nsDiff + uNsRange, uNsRange / 5))
+                    fade = (nsDiff + uNsRange) / (uNsRange / 5.);
+                FragColor.a = fade;
             }
-            discard;
+            else discard;
         }
         ''' \
         .replace('{MAX_COLORS}', str(len(defaultColors))) \
@@ -906,11 +924,11 @@ class AnalogPlot2(Rectangle, pipeline.Sampled):
     _properties = dict(tsRange=20)
 
     def __init__(self, **kwargs):
-        self._initProperties(AnalogPlot2._properties, kwargs)
+        self._initProperties(AnalogPlotTexture._properties, kwargs)
         super().__init__(**kwargs)
 
     def __getattr__(self, name):
-        if name in AnalogPlot2._properties:
+        if name in AnalogPlotTexture._properties:
             return super().__getattr__('_' + name)
         else:
             return super().__getattr__(name)
@@ -950,7 +968,7 @@ class AnalogPlot2(Rectangle, pipeline.Sampled):
         glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, self._texShape[2],
             self._texShape[1], self._texShape[0], 0, GL_RED, GL_FLOAT,
             self._buffer._data)
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         # glGenerateMipmap(GL_TEXTURE_2D)
 
@@ -997,21 +1015,18 @@ class AnalogPlot2(Rectangle, pipeline.Sampled):
                     xRange = (0, self._texShape[2])
                 else:
                     xRange = (ns1 % self._texShape[2], ns2 % self._texShape[2])
-                yRange = (ns1 // self._texShape[2], ns2 // self._texShape[2])
+                yRange = (ns1 // self._texShape[2], ns2 // self._texShape[2]+1)
             zRange = (0, self.channels)
 
             ns3 = xRange[0] + yRange[0]*self._texShape[2]
-            ns4 = xRange[1] + yRange[1]*self._texShape[2]
-            # data = self._buffer.read(ns3, ns4)
+            ns4 = xRange[1] + (yRange[1]-1)*self._texShape[2]
             data = self._buffer._data[:,ns3:ns4]
             self._buffer.read()
-            # print((ns1, ns2), xRange, yRange, (ns3, ns4))
+
+            self._prog.setUniform('uNs', '1i', int(self._buffer.nsWritten))
 
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_3D, self._tex)
-            # glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, self._texShape[2],
-            #     self._texShape[1], self._texShape[0], 0, GL_RED, GL_FLOAT,
-            #     self._buffer._data)
             glTexSubImage3D(GL_TEXTURE_3D, 0, xRange[0], yRange[0], zRange[0],
                 xRange[1]-xRange[0], yRange[1]-yRange[0], zRange[1]-zRange[0],
                 GL_RED, GL_FLOAT, data)
@@ -1160,7 +1175,9 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._fps = fps
 
         drawDuration = np.mean(self._drawDurations)
-        self._stats.text = '%.1f Hz\n%.1f μs' % (fps, drawDuration*1e6)
+        self._stats.text = '%.1f Hz\n%.1f μs\n%.1f s\n%d' % \
+            (fps, drawDuration*1e6, self._plot.ts,
+            self._plot.ns)
 
     def initializeGL(self):
         # initialize graphical items here
@@ -1173,9 +1190,10 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self.channels = 32
 
         self._figure = Figure(parent=self, margin=(60,20,20,10))
-        # self._plot = AnalogPlot2(parent=self._figure.view, fs=fs,
+        # self._plot = AnalogPlotTexture(parent=self._figure.view, fs=fs,
         #     tsRange=tsRange, channels=32)
-        self._plot = AnalogPlot2(parent=self._figure.view, tsRange=self.tsRange)
+        self._plot = AnalogPlotTexture(parent=self._figure.view,
+            tsRange=self.tsRange)
 
         # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         self.generator = SineGenerator(fs=self.fs, channels=self.channels)
@@ -1300,7 +1318,7 @@ class SineGenerator(Generator):
         # generate data as a (channels, ns) array.
         return (self._amps * np.sin(2 * np.pi * self._freqs
             * np.arange(ns1, ns2) / self._fs + self._phases)
-            + self._amps2 * np.random.randn(self._channels, ns2-ns1))
+             + self._amps2 * np.random.randn(self._channels, ns2-ns1))
 
 
 class SpikeGenerator(Generator):
