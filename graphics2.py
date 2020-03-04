@@ -13,9 +13,8 @@ Distributed under GNU GPLv3. See LICENSE.txt for more info.
 #   800x600 window looks almost the same on both low and high DPI screens.
 #   this causes an issue that texts drawn with QPainter without adjusting for
 #   pixel ratio will look pixelated on high DPI.
-#   however, OpenGL coordinates in fragment shader are actual pixel values and
-#   must be normalized manually if necessary
-# -
+# - OpenGL coordinates in fragment shader are actual screen pixel values and
+#   must be normalized manually if necessary. Look at getPixelRatio().
 
 import sys
 import math
@@ -360,7 +359,7 @@ class Text(Item):
     def getSize(cls, text, font):
         '''Get width and height of the given text in pixels'''
         if not hasattr(cls, '_image'):
-            cls._image = QtGui.QPixmap(1, 1)
+            cls._image = QtGui.QImage(1, 1, QtGui.QImage.Format_ARGB32)
             cls._painter = QtGui.QPainter()
             cls._painter.begin(cls._image)
 
@@ -373,7 +372,7 @@ class Text(Item):
     # properties with their default values
     _properties = dict(text='', pos=(.5,.5), anchor=(.5,.5), margin=(0,0,0,0),
         fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
-        bgColor=(0,0,0,0), fgColor=(0,0,0,1))
+        bgColor=(1,1,1,0), fgColor=(0,0,0,1))
 
     _uProperties = dict(pos=('uPos', '2f'), anchor=('uAnchor', '2f'))
 
@@ -469,7 +468,7 @@ class Text(Item):
         if w==0: w += 1
         if h==0: h += 1
 
-        image = QtGui.QPixmap(w, h)
+        image = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32)
         image.fill(QtGui.QColor(*np.array(self.bgColor)*255))
 
         painter = QtGui.QPainter()
@@ -480,9 +479,8 @@ class Text(Item):
             w - margin[0] - margin[2], h - margin[1] - margin[3],
             self.align, self.text)
         painter.end()
-        image = image.toImage()
-        s = image.bits().asstring(w * h * 4)
-        texData = np.frombuffer(s, dtype=np.uint8).reshape((h, w, 4))
+        str = image.bits().asstring(w * h * 4)
+        texData = np.frombuffer(str, dtype=np.uint8).reshape((h, w, 4))
 
         self._prog.setUniform('uSize', '2f', (w/ratio, h/ratio))
 
@@ -1212,7 +1210,9 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
             align=QtCore.Qt.AlignLeft)
 
         glEnable(GL_BLEND)
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)
+        # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+            GL_ONE, GL_ZERO);
         glClearColor(*self.bgColor)
         # glClearDepth(1.0)
         # glDepthFunc(GL_LESS)
