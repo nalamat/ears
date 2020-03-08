@@ -938,6 +938,7 @@ class AnalogPlotTexture(Rectangle, pipeline.Sampled):
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
 
+        self._tsOffset = 0
         self._nsRange = int(np.ceil(self.tsRange * self.fs))
 
         if self._nsRange > max3DTextureSize**2:
@@ -995,7 +996,7 @@ class AnalogPlotTexture(Rectangle, pipeline.Sampled):
             self._ticks[i] = Text(parent=self, text=str(ts),
                 pos=(ts/self._tsRange, 1), anchor=(.5,0),
                 margin=(0,0,0,3+self.margin[1]),
-                fontSize=10, fgColor=self.fgColor)
+                fontSize=10, fgColor=self.fgColor, bold=True)
 
     def _written(self, data, source):
         with self._buffer:
@@ -1003,10 +1004,21 @@ class AnalogPlotTexture(Rectangle, pipeline.Sampled):
 
         super()._written(data, source)
 
+    def refresh(self):
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/10)):
+            self._ticks[i].text = str(ts + self._tsOffset)
+
     def draw(self):
         with self._buffer:
+            tsOffset = (self.ts // self._tsRange) * self._tsRange
+            if tsOffset != self._tsOffset:
+                self._tsOffset = tsOffset
+                self.refresh()
+
             ns1 = self._buffer.nsRead
             ns2 = self._buffer.nsWritten
+
             if ns1 // self._nsRange != ns2 // self._nsRange:
                 xRange = (0, self._texShape[2])
                 yRange = (0, self._texShape[1])
