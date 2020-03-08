@@ -185,6 +185,18 @@ class Program:
         self.vbos = {}
         self.ebo = None
 
+        self._contexts = 0
+
+    def __enter__(self):
+        if not self._contexts:
+            self.begin()
+        self._contexts += 1
+
+    def __exit__(self, *args):
+        self._contexts -= 1
+        if not self._contexts:
+            self.end()
+
     def begin(self):
         glUseProgram(self.id)
         glBindVertexArray(self.vao)
@@ -193,14 +205,14 @@ class Program:
         glBindVertexArray(0)
         glUseProgram(0)
 
-    def setUniform(self, name, type, value, use=True):
-        if not isinstance(value, collections.abc.Iterable): value = (value,)
-        if use: glUseProgram(self.id)
-        id = glGetUniformLocation(self.id, name)
-        globals()['glUniform' + type](id, *value)
-        if use: glUseProgram(0)
+    def setUniform(self, name, type, value):
+        with self:
+            if not isinstance(value, collections.abc.Iterable):
+                value = (value,)
+            id = glGetUniformLocation(self.id, name)
+            globals()['glUniform' + type](id, *value)
 
-    def setVBO(self, name, type, size, data, usage, use=True):
+    def setVBO(self, name, type, size, data, usage):
         '''Copy vertex data to a VBO and link to its vertex attribute.
 
         Args:
@@ -211,21 +223,19 @@ class Program:
             usage (int): Expected usage pattern, e.g. GL_STATIC_DRAW,
                 GL_DYNAMIC_DRAW, GL_STREAM_DRAW
         '''
-        if use: self.begin()
-        if name not in self.vbos: self.vbos[name] = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbos[name])
-        glBufferData(GL_ARRAY_BUFFER, data, usage)
-        loc = glGetAttribLocation(self.id, name)
-        glVertexAttribPointer(loc, size, type, GL_FALSE, 0, c_void_p(0))
-        glEnableVertexAttribArray(loc)
-        if use: self.end()
+        with self:
+            if name not in self.vbos: self.vbos[name] = glGenBuffers(1)
+            glBindBuffer(GL_ARRAY_BUFFER, self.vbos[name])
+            glBufferData(GL_ARRAY_BUFFER, data, usage)
+            loc = glGetAttribLocation(self.id, name)
+            glVertexAttribPointer(loc, size, type, GL_FALSE, 0, c_void_p(0))
+            glEnableVertexAttribArray(loc)
 
-    def setEBO(self, data, usage, use=True):
-        if use: self.begin()
-        if not self.ebo: self.ebo = glGenBuffers(1)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, data, usage)
-        if use: self.end()
+    def setEBO(self, data, usage):
+        with self:
+            if not self.ebo: self.ebo = glGenBuffers(1)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, data, usage)
 
 
 class Item:
@@ -445,11 +455,10 @@ class Text(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.begin()
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
-        self._prog.end()
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
         super().parentResized()
 
@@ -490,8 +499,8 @@ class Text(Item):
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, texData.shape[1],
             texData.shape[0], 0, GL_BGRA, GL_UNSIGNED_BYTE, texData)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glGenerateMipmap(GL_TEXTURE_2D)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        # glGenerateMipmap(GL_TEXTURE_2D)
 
         super().refresh()
 
@@ -501,9 +510,8 @@ class Text(Item):
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self._tex)
 
-        self._prog.begin()
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
-        self._prog.end()
+        with self._prog:
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
 
         super().draw()
 
@@ -621,21 +629,19 @@ class Rectangle(Item):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.begin()
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
-        self._prog.end()
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
         super().parentResized()
 
     def draw(self):
         if not self.visible: return
 
-        self._prog.begin()
-        glDrawElements(GL_TRIANGLES, self._indices.size,
-            GL_UNSIGNED_INT, c_void_p(0))
-        self._prog.end()
+        with self._prog:
+            glDrawElements(GL_TRIANGLES, self._indices.size,
+                GL_UNSIGNED_INT, c_void_p(0))
 
         super().draw()
 
@@ -839,20 +845,18 @@ class AnalogPlot(Item, pipeline.Sampled):
             super().__setattr__(name, value)
 
     def parentResized(self):
-        self._prog.begin()
-        self._prog.setUniform('uParentPos', '2f', self.parent.posPxl, False)
-        self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl, False)
-        self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl, False)
-        self._prog.end()
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
         super().parentResized()
 
     def draw(self):
         if not self.visible: return
 
-        self._prog.begin()
-        glDrawArrays(GL_LINE_STRIP, 0, self._vertices.size)
-        self._prog.end()
+        with self._prog:
+            glDrawArrays(GL_LINE_STRIP, 0, self._vertices.size)
 
         super().draw()
 
