@@ -231,6 +231,10 @@ class Program:
             glVertexAttribPointer(loc, size, type, GL_FALSE, 0, c_void_p(0))
             glEnableVertexAttribArray(loc)
 
+    def subVBO(self, name, offset, data):
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbos[name])
+        glBufferSubData(GL_ARRAY_BUFFER, offset, data)
+
     def setEBO(self, data, usage):
         with self:
             if not self.ebo: self.ebo = glGenBuffers(1)
