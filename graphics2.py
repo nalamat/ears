@@ -253,7 +253,7 @@ class Item:
 
     # properties with their default values
     _properties = dict(parent=None, pos=(0,0), size=(1,1), margin=(0,0,0,0),
-        bgColor=(0,0,0,0), fgColor=(0,0,0,1), visible=True)
+        bgColor=(1,1,1,0), fgColor=(0,0,0,1), visible=True)
 
     def __init__(self, **kwargs):
         '''
@@ -1052,6 +1052,316 @@ class AnalogPlotTexture(Rectangle, pipeline.Sampled):
         super().draw()
 
 
+class AnalogPlotBuffered(Item, pipeline.Sampled):
+    _vertShader = '''
+        in vec2 aVertex;
+        in vec2 aTexCoord;
+
+        out vec2 TexCoord;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4( (aVertex * size + pos) * 2 - vec2(1), 0, 1);
+
+            TexCoord = aTexCoord;
+        }
+        '''
+
+    _fragShader = '''
+        in vec2 TexCoord;
+
+        out vec4 FragColor;
+
+        uniform int  uNs;
+        uniform int  uNsRange;
+
+        uniform sampler2D uTexture;
+
+        void main() {
+            FragColor = texture(uTexture, TexCoord);
+
+            float x = TexCoord.x;
+            float diff = x - float(uNs) / uNsRange;
+            float fadeRange = .5;
+            float fade = 1;
+            if (between(0, diff, fadeRange))
+                fade = diff / fadeRange;
+            else if (between(0, diff + 1, fadeRange))
+                fade = (diff + 1) / fadeRange;
+            fade = sin((fade*2-1)*3.1415/2)/2+.5;
+            FragColor.a *= fade;
+        }
+        '''
+
+    _vertShader2 = '''
+        in float aVertex;
+
+        out float fChannel;
+
+        uniform int   uNsRange;
+        uniform int   uChannels;
+
+        void main() {
+            int channel = gl_VertexID / uNsRange;
+            vec2 vertex = vec2((gl_VertexID % uNsRange) / (uNsRange - 1.),
+                ((aVertex + 1) / 2 + uChannels - 1 - channel) / uChannels);
+
+            vertex = vertex * 2 - vec2(1);
+
+            gl_Position = vec4(vertex, 0, 1);
+            fChannel = channel;
+        }
+        '''
+
+    _fragShader2 = '''
+        in float fChannel;
+        out vec4 FragColor;
+
+        uniform vec4  uColor[{MAX_CHANNELS}];
+
+        void main() {
+            if (0 < fract(fChannel)) discard;
+            FragColor = uColor[int(fChannel) % {MAX_COLORS}];
+        }
+        ''' \
+        .replace('{MAX_COLORS}', str(len(defaultColors))) \
+        .replace('{MAX_CHANNELS}', str(maxChannels))
+
+    _properties = dict(tsRange=20)
+
+    _uProperties = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+        margin=('uMargin', '4f'))
+
+    def __init__(self, **kwargs):
+        '''
+        '''
+
+        self._initProperties(AnalogPlotBuffered._properties, kwargs)
+        super().__init__(**kwargs)
+
+        vertices = np.array([
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 0],
+            ], dtype=np.float32)
+
+        indices = np.array([
+            [0,1,3],
+            [1,2,3],
+            ], dtype=np.uint32)
+
+        texCoords = np.array([
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 0],
+            ], dtype=np.float32)
+
+        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
+
+        with self._prog:
+            for name, value in AnalogPlotBuffered._uProperties.items():
+                self._prog.setUniform(*value, getattr(self, name))
+
+            self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices,
+                GL_STATIC_DRAW)
+            self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords,
+                GL_STATIC_DRAW)
+            self._prog.setEBO(indices, GL_STATIC_DRAW)
+
+        self._fboSize = (1920, 1080)
+        self._tex = glGenTextures(1)
+        self._fbo = glGenFramebuffers(1)
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self._tex)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, *self._fboSize, 0, GL_RGBA,
+            GL_UNSIGNED_BYTE, c_void_p(0))
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+            GL_TEXTURE_2D, self._tex, 0)
+        if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError('Framebuffer not complete')
+
+    def __getattr__(self, name):
+        if name in AnalogPlotBuffered._properties:
+            return super().__getattr__('_' + name)
+        else:
+            return super().__getattr__(name)
+
+    def __setattr__(self, name, value):
+        if name in AnalogPlotBuffered._uProperties:
+            super().__setattr__('_' + name, value)
+            self._prog.setUniform(*AnalogPlotBuffered._uProperties[name], value)
+        elif name in AnalogPlotBuffered._properties:
+            super().__setattr__('_' + name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._tsOffset = 0
+        self._nsRange = int(np.ceil(self.tsRange * self.fs))
+
+        self._prog.setUniform('uNsRange', '1i', self._nsRange)
+
+        if self.channels > maxChannels:
+            raise ValueError('Channel count cannot exceed %d' % maxChannels)
+
+        self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
+            dtype=np.float32)
+
+        # gen = SineGenerator(fs=self.fs, channels=self.channels, noisy=True)
+        # with self._buffer:
+        #     self._buffer._data[:,:] = gen._gen(0, self._nsRange)
+
+        self._prog2 = Program(vert=self._vertShader2, frag=self._fragShader2)
+
+        with self._prog2:
+            self._prog2.setUniform('uNsRange', '1i', np.int32(self._nsRange))
+            self._prog2.setUniform('uChannels', '1i', np.int32(self.channels))
+            self._prog2.setUniform('uColor', '4fv',
+                (self.channels, defaultColors))
+
+            self._prog2.setVBO('aVertex', GL_FLOAT, 1, self._buffer._data,
+                GL_DYNAMIC_DRAW)
+
+        self._labels = [None] * self.channels
+        for channel in range(self.channels):
+            self._labels[channel] = Text(parent=self, text=str(channel+1),
+                pos=(0, 1-(channel+.5)/self.channels), anchor=(1,.5),
+                margin=(0,0,3+self.margin[0],0), fontSize=16, bold=True,
+                fgColor=defaultColors[channel % len(defaultColors)])
+
+        self._ticks = [None]*11
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/10)):
+            self._ticks[i] = Text(parent=self, text=str(ts),
+                pos=(ts/self._tsRange, 1), anchor=(.5,0),
+                margin=(0,0,0,3+self.margin[1]),
+                fontSize=10, fgColor=self.fgColor, bold=True)
+
+        self.refresh()
+
+    def _written(self, data, source):
+        with self._buffer:
+            self._buffer.write(data)
+
+        super()._written(data, source)
+
+    def parentResized(self):
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+        super().parentResized()
+
+    def refresh(self, ns1=None, ns2=None):
+        if ns1 is None: ns1 = 0
+        if ns2 is None: ns2 = self._nsRange
+        if not ns1 < ns2:
+            # wrap around
+            self.refresh(ns1, self._nsRange)
+            self.refresh(0, ns2)
+            return
+
+        fbo = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
+        viewport = glGetIntegerv(GL_VIEWPORT)
+        glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
+
+        glViewport(0, 0, *self._fboSize)
+        # glClearColor(*self.bgColor)
+        # glClearColor(1,1,1,1)
+        # glClear(GL_COLOR_BUFFER_BIT)
+
+        x1 = int(ns1/self._nsRange*self._fboSize[0])
+        x2 = int(np.ceil((ns2-ns1)/self._nsRange*self._fboSize[0]))
+
+        c1 = int(x1 / self._fboSize[0] * self._nsRange)
+        c2 = int(x2 / self._fboSize[0] * self._nsRange)
+
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(x1, 0, x2, self._fboSize[1])
+        glClearColor(*self.bgColor)
+        glClear(GL_COLOR_BUFFER_BIT)
+        glDisable(GL_SCISSOR_TEST)
+
+        glViewport(0, 0, *self._fboSize)
+
+        with self._prog2:
+            for i in range(self.channels):
+                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + c1,
+                    c2)
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo)
+        glViewport(*viewport)
+
+    def refreshTicks(self):
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/10)):
+            self._ticks[i].text = str(ts + self._tsOffset)
+
+    def sub(self, ns1, ns2, data):
+        if not ns1 < ns2:
+            self.sub(ns1, self._nsRange, data[:, ns1:self._nsRange])
+            self.sub(0, ns2, data[:, 0:ns2])
+            return
+
+        with self._prog2:
+            # self._prog2.setVBO('aVertex', GL_FLOAT, 1,
+            #     self._buffer._data, GL_DYNAMIC_DRAW)
+            for i in range(self.channels):
+                self._prog2.subVBO('aVertex',
+                    (i * self._nsRange + ns1) * sizeFloat,
+                    data[i, :])
+
+    def draw(self):
+        if not self.visible: return
+
+        with self._buffer:
+            if self._buffer.nsAvailable:
+                ns1 = self._buffer.nsRead % self._nsRange
+                ns2 = self._buffer.nsWritten % self._nsRange
+                data = self._buffer.read()
+                self.sub(ns1, ns2, data)
+                self.refresh(ns1, ns2)
+                self._prog.setUniform('uNs', '1i', ns2)
+
+            tsOffset = (self.ts // self._tsRange) * self._tsRange
+            if tsOffset != self._tsOffset:
+                self._tsOffset = tsOffset
+                self.refreshTicks()
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self._tex)
+
+        with self._prog:
+            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
+
+        super().draw()
+
+
 class Figure(Item):
     _properties = dict(borderWidth=2, zoom=(1,1),
         pan=(0,0))
@@ -1069,7 +1379,7 @@ class Figure(Item):
 
         self._grid = Grid(parent=self.view,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
-            xTicks=np.arange(1, 19.1)/20, yTicks=np.arange(.5, 15.6)/16)
+            xTicks=np.arange(1, 19.1)/20, yTicks=np.arange(1, 15.1)/16)
 
         # a border around the figure
         self._border = Rectangle(parent=self, pos=(0,0), size=(1,1),
@@ -1179,14 +1489,6 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._timerStats.timeout.connect(self.updateStats)
         self._timerStats.setInterval(100)
 
-    def __setattr__(self, name, value):
-        if name == 'bgColor':
-            super().__setattr__('_' + name, value)
-            self.makeCurrent()
-            glClearColor(*value)
-        else:
-            super().__setattr__(name, value)
-
     def updateStats(self):
         drawTime = np.mean(self._drawTimes)
         fps = 1/drawTime if drawTime else 0
@@ -1205,17 +1507,24 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         self.fs = 31.25e3
         self.tsRange = 20
-        self.channels = 32
+        self.channels = 16
 
         self._figure = Figure(parent=self, margin=(60,20,20,10))
         # self._plot = AnalogPlotTexture(parent=self._figure.view, fs=fs,
         #     tsRange=tsRange, channels=32)
-        self._plot = AnalogPlotTexture(parent=self._figure.view,
+        self._plot = AnalogPlotBuffered(parent=self._figure.view,
             tsRange=self.tsRange)
 
-        # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
-        self.generator = SineGenerator(fs=self.fs, channels=self.channels)
+        # self._plot2 = AnalogPlotBuffered(parent=self._figure.view,
+        #     size=(.5, .5))
 
+        # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
+        self.generator = SineGenerator(fs=self.fs, channels=self.channels,
+            noisy=True)
+        self.filter    = pipeline.LFilter(fl=100, fh=6000)
+        self.grandAvg  = pipeline.GrandAverage()
+
+        # self.generator >> self.filter >> self.grandAvg >> self._plot
         self.generator >> self._plot
 
         # time = np.array([np.arange(np.ceil(fs*tsRange))]*channels)/fs
@@ -1226,14 +1535,13 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         item = Item(parent=self, margin=(2,)*4)
         self._stats = Text(parent=item, text='0', pos=(0,1), anchor=(0,1),
-            fgColor=self.fgColor, fontSize=7, bold=True, margin=(1,)*4,
+            fgColor=self.fgColor, fontSize=8, bold=True, margin=(1,)*4,
             align=QtCore.Qt.AlignLeft)
 
         glEnable(GL_BLEND)
         # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
             GL_ONE, GL_ZERO);
-        glClearColor(*self.bgColor)
         # glClearDepth(1.0)
         # glDepthFunc(GL_LESS)
         # glEnable(GL_DEPTH_TEST)
@@ -1264,6 +1572,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
             if len(self._drawTimes)>60: self._drawTimes.pop(0)
         self._drawLast = dt.datetime.now()
 
+        glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT) # | GL_DEPTH_BUFFER_BIT)
 
         self.callItems('draw')
