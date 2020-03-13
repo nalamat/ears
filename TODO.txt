@@ -26,7 +26,7 @@ x migrate plotting subsystem to vispy and gloo
 + add a readme
 + add 2 decimal points to experiment duration when exporting
 - add export for spout training and target training
-- update AnalogPlotBuffered when resized
++ update AnalogPlotBuffered when resized
 - automatic handling of GL context when initializing or refreshing Item
 - fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
   for as the newest samples

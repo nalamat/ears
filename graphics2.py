@@ -1053,9 +1053,8 @@ class AnalogPlotTexture(Rectangle, pipeline.Sampled):
 class AnalogPlotBuffered(Item, pipeline.Sampled):
     _vertShader = '''
         in vec2 aVertex;
-        in vec2 aTexCoord;
 
-        out vec2 TexCoord;
+        out vec2 vVertex;
 
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
@@ -1076,24 +1075,25 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
             // apply transformation to vertex and take to NDC space
             gl_Position = vec4( (aVertex * size + pos) * 2 - vec2(1), 0, 1);
 
-            TexCoord = aTexCoord;
+            vVertex = aVertex;
         }
         '''
 
     _fragShader = '''
-        in vec2 TexCoord;
+        in vec2 vVertex;
 
         out vec4 FragColor;
 
         uniform int  uNs;
         uniform int  uNsRange;
+        uniform vec2 uTexSize;     // unit
 
         uniform sampler2D uTexture;
 
         void main() {
-            FragColor = texture(uTexture, TexCoord);
+            FragColor = texture(uTexture, vVertex * uTexSize);
 
-            float x = TexCoord.x;
+            float x = vVertex.x;
             float diff = x - float(uNs % uNsRange) / uNsRange;
             float fadeRange = .5;
             float fade = 1;
@@ -1162,16 +1162,9 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
             ], dtype=np.float32)
 
         indices = np.array([
-            [0,1,3],
-            [1,2,3],
+            [0, 1, 3],
+            [1, 2, 3],
             ], dtype=np.uint32)
-
-        texCoords = np.array([
-            [0, 0],
-            [0, 1],
-            [1, 1],
-            [1, 0],
-            ], dtype=np.float32)
 
         self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
@@ -1179,13 +1172,10 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
             for name, value in AnalogPlotBuffered._uProperties.items():
                 self._prog.setUniform(*value, getattr(self, name))
 
-            self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices,
-                GL_STATIC_DRAW)
-            self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords,
-                GL_STATIC_DRAW)
+            self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
             self._prog.setEBO(indices, GL_STATIC_DRAW)
 
-        self._fboSize = (1920, 1080)
+        self._fboSize = (4000, 4000)
         self._tex = glGenTextures(1)
         self._fbo = glGenFramebuffers(1)
 
@@ -1231,10 +1221,6 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
         self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
             dtype=np.float32)
 
-        # gen = SineGenerator(fs=self.fs, channels=self.channels, noisy=True)
-        # with self._buffer:
-        #     self._buffer._data[:,:] = gen._gen(0, self._nsRange)
-
         self._prog2 = Program(vert=self._vertShader2, frag=self._fragShader2)
 
         with self._prog2:
@@ -1270,12 +1256,17 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
         super()._written(data, source)
 
     def resized(self):
+        super().resized()
+
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+            self._prog.setUniform('uTexSize', '2f',
+                (self.sizePxl / self._fboSize * getPixelRatio()) \
+                .clip(None, [1,1]))
 
-        super().resized()
+        self.refresh()
 
     def refresh(self, ns1=None, ns2=None):
         if ns1 is None: ns1 = 0
@@ -1287,28 +1278,31 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
             self.refresh(0, ns2)
             return
 
+        sizePxl = (self.sizePxl * getPixelRatio()).astype(np.int32)
+        sizePxl = sizePxl.clip(None, self._fboSize)
+
         # save currently bound framebuffer and viewport
         fbo = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
         viewport = glGetIntegerv(GL_VIEWPORT)
 
         # switch to the offscreen framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
-        glViewport(0, 0, *self._fboSize)
+        glViewport(0, 0, *sizePxl)
 
         # horizontal pixel range of the redraw area
-        x1 = int(ns1/self._nsRange*self._fboSize[0])
-        x2 = int(np.ceil((ns2-ns1)/self._nsRange*self._fboSize[0]))
+        x1 = int(ns1 / self._nsRange * sizePxl[0])
+        x2 = int(np.ceil((ns2 - ns1) / self._nsRange * sizePxl[0]))
 
         # clear only the portion of the framebuffer that needs to be redrawn
         glEnable(GL_SCISSOR_TEST)
-        glScissor(x1, 0, x2, self._fboSize[1])
+        glScissor(x1, 0, x2, sizePxl[1])
         glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT)
         glDisable(GL_SCISSOR_TEST)
 
         # sample range aligned to the redraw area pixels
-        n1 = int(x1 / self._fboSize[0] * self._nsRange)
-        n2 = int(x2 / self._fboSize[0] * self._nsRange)
+        n1 = int(x1 / sizePxl[0] * self._nsRange)
+        n2 = int(x2 / sizePxl[0] * self._nsRange)
 
         # draw the analog signals
         with self._prog2:
@@ -1516,7 +1510,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         self.generator = SineGenerator(fs=self.fs, channels=self.channels,
-            noisy=False)
+            noisy=True)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 
