@@ -314,14 +314,14 @@ class Item:
                 getattr(item, func)(*args, **kwargs)
 
     # initally called from Canvas.resizeGL
-    def parentResized(self):
+    def resized(self):
         parent = self.parent
         margin = np.array(self.margin)
 
         self._posPxl = self.pos * parent.sizePxl + parent.posPxl + margin[[0,3]]
         self._sizePxl = self.size * parent.sizePxl - margin[0:2] - margin[2:4]
 
-        self.callItems('parentResized')
+        self.callItems('resized')
 
     _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
         'on_mouse_release', 'on_key_release', 'draw', 'refresh']
@@ -458,13 +458,13 @@ class Text(Item):
         else:
             super().__setattr__(name, value)
 
-    def parentResized(self):
+    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-        super().parentResized()
+        super().resized()
 
     def refresh(self):
         '''Generates texture for the given text, font, color, etc.
@@ -630,13 +630,13 @@ class Rectangle(Item):
         else:
             super().__setattr__(name, value)
 
-    def parentResized(self):
+    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-        super().parentResized()
+        super().resized()
 
     def draw(self):
         if not self.visible: return
@@ -846,13 +846,13 @@ class AnalogPlot(Item, pipeline.Sampled):
         else:
             super().__setattr__(name, value)
 
-    def parentResized(self):
+    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-        super().parentResized()
+        super().resized()
 
     def draw(self):
         if not self.visible: return
@@ -1269,13 +1269,13 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
 
         super()._written(data, source)
 
-    def parentResized(self):
+    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-        super().parentResized()
+        super().resized()
 
     def refresh(self, ns1=None, ns2=None):
         if ns1 is None: ns1 = 0
@@ -1552,7 +1552,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
     def resizeGL(self, w, h):
         self._posPxl = np.array([0, 0])
         self._sizePxl = np.array([w, h])
-        self.callItems('parentResized')
+        self.callItems('resized')
 
     def paintGL(self):
         if hasattr(self, '_drawLast'):
