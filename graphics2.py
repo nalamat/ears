@@ -506,8 +506,6 @@ class Text(Item):
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         # glGenerateMipmap(GL_TEXTURE_2D)
 
-        super().refresh()
-
     def draw(self):
         if not self.visible: return
 
@@ -1096,13 +1094,15 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
             FragColor = texture(uTexture, TexCoord);
 
             float x = TexCoord.x;
-            float diff = x - float(uNs) / uNsRange;
+            float diff = x - float(uNs % uNsRange) / uNsRange;
             float fadeRange = .5;
             float fade = 1;
-            if (between(0, diff, fadeRange))
-                fade = diff / fadeRange;
-            else if (between(0, diff + 1, fadeRange))
+            if (between(0, diff + 1, fadeRange))
                 fade = (diff + 1) / fadeRange;
+            else if (0 < diff && uNs < uNsRange)
+                fade = 0;
+            else if (between(0, diff, fadeRange))
+                fade = diff / fadeRange;
             fade = sin((fade*2-1)*3.1415/2)/2+.5;
             FragColor.a *= fade;
         }
@@ -1280,40 +1280,42 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
     def refresh(self, ns1=None, ns2=None):
         if ns1 is None: ns1 = 0
         if ns2 is None: ns2 = self._nsRange
+
+        # wrap around
         if not ns1 < ns2:
-            # wrap around
             self.refresh(ns1, self._nsRange)
             self.refresh(0, ns2)
             return
 
+        # save currently bound framebuffer and viewport
         fbo = glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING)
         viewport = glGetIntegerv(GL_VIEWPORT)
+
+        # switch to the offscreen framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
-
         glViewport(0, 0, *self._fboSize)
-        # glClearColor(*self.bgColor)
-        # glClearColor(1,1,1,1)
-        # glClear(GL_COLOR_BUFFER_BIT)
 
+        # horizontal pixel range of the redraw area
         x1 = int(ns1/self._nsRange*self._fboSize[0])
         x2 = int(np.ceil((ns2-ns1)/self._nsRange*self._fboSize[0]))
 
-        c1 = int(x1 / self._fboSize[0] * self._nsRange)
-        c2 = int(x2 / self._fboSize[0] * self._nsRange)
-
+        # clear only the portion of the framebuffer that needs to be redrawn
         glEnable(GL_SCISSOR_TEST)
         glScissor(x1, 0, x2, self._fboSize[1])
         glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT)
         glDisable(GL_SCISSOR_TEST)
 
-        glViewport(0, 0, *self._fboSize)
+        # sample range aligned to the redraw area pixels
+        n1 = int(x1 / self._fboSize[0] * self._nsRange)
+        n2 = int(x2 / self._fboSize[0] * self._nsRange)
 
+        # draw the analog signals
         with self._prog2:
             for i in range(self.channels):
-                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + c1,
-                    c2)
+                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + n1, n2)
 
+        # restore the previously bound framebuffer and viewport
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
         glViewport(*viewport)
 
@@ -1322,15 +1324,15 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
                 self._tsRange/10)):
             self._ticks[i].text = str(ts + self._tsOffset)
 
+    # TODO: find a better name
     def sub(self, ns1, ns2, data):
         if not ns1 < ns2:
             self.sub(ns1, self._nsRange, data[:, ns1:self._nsRange])
             self.sub(0, ns2, data[:, 0:ns2])
             return
 
+        # transfer samples to GPU channel by channel
         with self._prog2:
-            # self._prog2.setVBO('aVertex', GL_FLOAT, 1,
-            #     self._buffer._data, GL_DYNAMIC_DRAW)
             for i in range(self.channels):
                 self._prog2.subVBO('aVertex',
                     (i * self._nsRange + ns1) * sizeFloat,
@@ -1346,7 +1348,7 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
                 data = self._buffer.read()
                 self.sub(ns1, ns2, data)
                 self.refresh(ns1, ns2)
-                self._prog.setUniform('uNs', '1i', ns2)
+                self._prog.setUniform('uNs', '1i', self._buffer.nsWritten)
 
             tsOffset = (self.ts // self._tsRange) * self._tsRange
             if tsOffset != self._tsOffset:
@@ -1495,19 +1497,16 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._fps = fps
 
         drawDuration = np.mean(self._drawDurations)
-        self._stats.text = '%.1f Hz\n%.1f μs\n%.1f s\n%d' % \
-            (fps, drawDuration*1e6, self._plot.ts,
+        self.makeCurrent()
+        self._stats.text = '%.1f Hz\n%.2f ms\n%.1f s\n%d' % \
+            (fps, drawDuration*1e3, self._plot.ts,
             self._plot.ns)
 
     def initializeGL(self):
         # initialize graphical items here
-        # self._text = Text(parent=self, text='Hello GL', pos=(.5,1),
-        #     anchor=(.5,1), margin=(0,30,0,0), fontSize=50,
-        #     fgColor=self.fgColor)
-
         self.fs = 31.25e3
         self.tsRange = 20
-        self.channels = 16
+        self.channels = 32
 
         self._figure = Figure(parent=self, margin=(60,20,20,10))
         # self._plot = AnalogPlotTexture(parent=self._figure.view, fs=fs,
@@ -1515,27 +1514,17 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._plot = AnalogPlotBuffered(parent=self._figure.view,
             tsRange=self.tsRange)
 
-        # self._plot2 = AnalogPlotBuffered(parent=self._figure.view,
-        #     size=(.5, .5))
-
         # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         self.generator = SineGenerator(fs=self.fs, channels=self.channels,
-            noisy=True)
+            noisy=False)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 
         # self.generator >> self.filter >> self.grandAvg >> self._plot
         self.generator >> self._plot
 
-        # time = np.array([np.arange(np.ceil(fs*tsRange))]*channels)/fs
-        # data = np.sin(time*2*np.pi).astype(np.float32)
-        #
-        # self._plot.write(data[:,0:31250*2])
-        # self._plot.write(data[:,31250*2:31250*5])
-
-        item = Item(parent=self, margin=(2,)*4)
-        self._stats = Text(parent=item, text='0', pos=(0,1), anchor=(0,1),
-            fgColor=self.fgColor, fontSize=8, bold=True, margin=(1,)*4,
+        self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
+            fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
             align=QtCore.Qt.AlignLeft)
 
         glEnable(GL_BLEND)
