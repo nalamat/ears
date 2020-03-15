@@ -45,7 +45,6 @@ maxChannels = 128
 max3DTextureSize = 1024
 
 
-
 defaultColors = np.array([
     [0 , 0 , .3, 1],
     [0 , 0 , .55, 1],
@@ -1118,7 +1117,7 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
 
         void main() {
             int channel = gl_VertexID / uNsRange;
-            vec2 vertex = vec2((gl_VertexID % uNsRange) / (uNsRange - 1.),
+            vec2 vertex = vec2(float(gl_VertexID % uNsRange) / uNsRange,
                 ((aVertex + 1) / 2 + uChannels - 1 - channel) / uChannels);
 
             vertex = vertex * 2 - vec2(1);
@@ -1272,8 +1271,10 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
         if ns1 is None: ns1 = 0
         if ns2 is None: ns2 = self._nsRange
 
+        if ns1 == ns2:
+            return
         # wrap around
-        if not ns1 < ns2:
+        if ns1 > ns2:
             self.refresh(ns1, self._nsRange)
             self.refresh(0, ns2)
             return
@@ -1289,25 +1290,29 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
         glBindFramebuffer(GL_FRAMEBUFFER, self._fbo)
         glViewport(0, 0, *sizePxl)
 
-        # horizontal pixel range of the redraw area
-        x1 = int(ns1 / self._nsRange * sizePxl[0])
-        x2 = int(np.ceil((ns2 - ns1) / self._nsRange * sizePxl[0]))
+        # when drawing lines, have to connect the new samples to the last one
+        ns1 = max(ns1 - 1, 0)
 
-        # clear only the portion of the framebuffer that needs to be redrawn
+        # left and right most pixels of the redraw region
+        x1 = int(np.floor(ns1 / self._nsRange * sizePxl[0]))
+        x2 = int(np.ceil (ns2 / self._nsRange * sizePxl[0]))
+
+        # align starting sample to the left most pixel of the redraw region
+        ns1 = int(x1 / sizePxl[0] * self._nsRange)
+
+        # clear and draw only the region that needs to be updated
         glEnable(GL_SCISSOR_TEST)
-        glScissor(x1, 0, x2, sizePxl[1])
+        glScissor(x1, 0, x2 - x1, sizePxl[1])
+
         glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT)
-        glDisable(GL_SCISSOR_TEST)
-
-        # sample range aligned to the redraw area pixels
-        n1 = int(x1 / sizePxl[0] * self._nsRange)
-        n2 = int(x2 / sizePxl[0] * self._nsRange)
 
         # draw the analog signals
         with self._prog2:
             for i in range(self.channels):
-                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + n1, n2)
+                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + ns1, ns2 - ns1)
+
+        glDisable(GL_SCISSOR_TEST)
 
         # restore the previously bound framebuffer and viewport
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
@@ -1320,9 +1325,12 @@ class AnalogPlotBuffered(Item, pipeline.Sampled):
 
     # TODO: find a better name
     def sub(self, ns1, ns2, data):
-        if not ns1 < ns2:
-            self.sub(ns1, self._nsRange, data[:, ns1:self._nsRange])
-            self.sub(0, ns2, data[:, 0:ns2])
+        if ns1 == ns2:
+            return
+        # wrap around
+        if ns1 > ns2:
+            self.sub(ns1, self._nsRange, data[:, :self._nsRange-ns1])
+            self.sub(0, ns2, data[:, self._nsRange-ns1:])
             return
 
         # transfer samples to GPU channel by channel
