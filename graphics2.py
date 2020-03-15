@@ -648,9 +648,9 @@ class Rectangle(Item):
 
 
 class Grid(Rectangle):
-    _fragShader = '''
-        #define MAX_TICKS 100
+    MAX_TICKS = 100
 
+    _fragShader = '''
         out vec4 FragColor;
 
         uniform vec2  uPos;         // unit
@@ -664,9 +664,9 @@ class Grid(Rectangle):
         uniform vec4  uBgColor;
         uniform vec4  uFgColor;
         uniform int   uXTickCount;
-        uniform float uXTicks[MAX_TICKS]; // unit
+        uniform float uXTicks[{MAX_TICKS}]; // unit
         uniform int   uYTickCount;
-        uniform float uYTicks[MAX_TICKS]; // unit
+        uniform float uYTicks[{MAX_TICKS}]; // unit
 
         void main() {
             // high DPI display support
@@ -693,7 +693,8 @@ class Grid(Rectangle):
 
             FragColor = vec4(0);
         }
-        '''
+        ''' \
+        .replace('{MAX_TICKS}', str(MAX_TICKS))
 
     _properties = dict(xTicks=[], yTicks=[])
 
@@ -701,10 +702,10 @@ class Grid(Rectangle):
         self._initProperties(Grid._properties, kwargs)
         super().__init__(**kwargs)
 
-        self._prog.setUniform('uXTickCount', '1i', len(self.xTicks))
-        self._prog.setUniform('uXTicks', '1fv', (len(self.xTicks), self.xTicks))
-        self._prog.setUniform('uYTickCount', '1i', len(self.yTicks))
-        self._prog.setUniform('uYTicks', '1fv', (len(self.yTicks), self.yTicks))
+        # set uniforms
+        with self._prog:
+            self.xTicks = self.xTicks
+            self.yTicks = self.yTicks
 
     def __getattr__(self, name):
         if name in Grid._properties:
@@ -714,342 +715,26 @@ class Grid(Rectangle):
 
     def __setattr__(self, name, value):
         if name == 'xTicks':
+            if len(value) > Grid.MAX_TICKS:
+                raise ValueError('Tick count cannot exceed %d' % Grid.MAX_TICKS)
             super().__setattr__('_' + name, value)
-            self._prog.setUniform('uXTickCount', '1i', len(self.xTicks))
-            self._prog.setUniform('uXTicks', '1fv',
-                (len(self.xTicks), self.xTicks))
+            with self._prog:
+                self._prog.setUniform('uXTickCount', '1i', len(self.xTicks))
+                self._prog.setUniform('uXTicks', '1fv',
+                    (len(self.xTicks), self.xTicks))
         elif name == 'yTicks':
+            if len(value) > Grid.MAX_TICKS:
+                raise ValueError('Tick count cannot exceed %d' % Grid.MAX_TICKS)
             super().__setattr__('_' + name, value)
-            self._prog.setUniform('uYTickCount', '1i', len(self.yTicks))
-            self._prog.setUniform('uYTicks', '1fv',
-                (len(self.yTicks), self.yTicks))
+            with self._prog:
+                self._prog.setUniform('uYTickCount', '1i', len(self.yTicks))
+                self._prog.setUniform('uYTicks', '1fv',
+                    (len(self.yTicks), self.yTicks))
         else:
             super().__setattr__(name, value)
 
 
 class AnalogPlot(Item, pipeline.Sampled):
-    _vertShader = '''
-        in float aVertex;
-
-        out float fChannel;
-
-        uniform vec2  uPos;
-        uniform vec2  uSize;
-        uniform vec4  uMargin;
-        uniform vec2  uParentPos;
-        uniform vec2  uParentSize;
-        uniform vec2  uCanvasSize;
-        uniform int   uCount;
-        uniform int   uChannels;
-
-        void main() {
-            int channel = gl_VertexID / uCount;
-            vec2 vertex = vec2((gl_VertexID % uCount) / (uCount - 1.),
-                ((aVertex + 1) / 2 + uChannels - 1 - channel) / uChannels);
-
-            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
-            vec2 size = uSize * uParentSize / uCanvasSize;
-
-            // add margin
-            pos += uMargin.xw / uCanvasSize;
-            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
-
-            vertex = (vertex * size + pos) * 2 - vec2(1);
-
-            gl_Position = vec4(vertex, 0, 1);
-            fChannel = channel;
-        }
-        '''
-
-    _fragShader = '''
-        in float fChannel;
-        out vec4 FragColor;
-
-        uniform vec4  uColor[{MAX_CHANNELS}];
-
-        void main() {
-            if (0 < fract(fChannel)) discard;
-            FragColor = uColor[int(fChannel) % {MAX_COLORS}];
-        }
-        ''' \
-        .replace('{MAX_COLORS}', str(len(defaultColors))) \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
-
-    _uProperties = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
-        margin=('uMargin', '4f'))
-
-    _properties = dict()
-
-    def __init__(self, **kwargs):
-        self._initProperties(AnalogPlot._properties, kwargs)
-        super().__init__(**kwargs)
-
-        self._tsRange = 10
-        self._channels = 16
-        self._fs = 32.5e3
-        self._count = np.ceil(self._tsRange * self._fs)
-
-        indices = np.array([np.arange(self._count)]*self._channels)
-        vertices = np.sin(indices/self._fs*2*np.pi).astype(np.float32)
-
-        # ds = 2
-        # print('Count:', vertices.shape[1])
-        # print('DS:', ds)
-        # pad = ds - vertices.shape[1] % ds
-        # print('Pad:', pad)
-        # vertices = np.c_[vertices, vertices[:,[-1]*pad]]
-        # print('Padded count:', vertices.shape[1])
-        # vertices = vertices.reshape(-1, ds)
-        # vertices = np.c_[vertices.min(-1), vertices.max(-1)] \
-        #     .reshape(self._channels,-1)
-        self._vertices = vertices
-
-        self._prog = Program(vert=self._vertShader,
-                             frag=self._fragShader)
-
-        for name, value in AnalogPlot._uProperties.items():
-            self._prog.setUniform(*value, getattr(self, name))
-        self._prog.setUniform('uCount', '1i',
-            np.int32(self._vertices.shape[-1]))
-        self._prog.setUniform('uChannels', '1i', np.int32(self._channels))
-        self._prog.setUniform('uColor', '4fv', (self._channels, defaultColors))
-
-        self._prog.setVBO('aVertex', GL_FLOAT, 1, self._vertices,
-            GL_DYNAMIC_DRAW)
-
-        self._labels = [None] * self._channels
-        for channel in range(self._channels):
-            self._labels[channel] = Text(parent=self, text=str(channel+1),
-                pos=(0, 1-(channel+.5)/self._channels), anchor=(1,.5),
-                margin=(0,0,3+self.margin[0],0), fontSize=16, bold=True,
-                fgColor=defaultColors[channel % len(defaultColors)])
-
-        self._ticks = [None]*11
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/10)):
-            self._ticks[i] = Text(parent=self, text=str(ts),
-                pos=(ts/self._tsRange, 1), anchor=(.5,0),
-                margin=(0,0,0,3+self.margin[1]),
-                fontSize=10, fgColor=self.fgColor)
-
-    def __getattr__(self, name):
-        if name in AnalogPlot._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
-
-    def __setattr__(self, name, value):
-        if name in AnalogPlot._uProperties:
-            super().__setattr__('_' + name, value)
-            self._prog.setUniform(*AnalogPlot._uProperties[name], value)
-        else:
-            super().__setattr__(name, value)
-
-    def resized(self):
-        with self._prog:
-            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
-            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
-            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
-
-        super().resized()
-
-    def draw(self):
-        if not self.visible: return
-
-        with self._prog:
-            glDrawArrays(GL_LINE_STRIP, 0, self._vertices.size)
-
-        super().draw()
-
-
-class AnalogPlotTexture(Rectangle, pipeline.Sampled):
-    '''High performance plotting using 3D texture and fragment shader.
-
-    Does not render well with signals that are noisy or have sharp transitions.
-    '''
-
-    _fragShader = '''
-        out vec4 FragColor;
-
-        uniform vec2  uPos;         // unit
-        uniform vec2  uSize;        // unit
-        uniform vec4  uMargin;      // pixels: l t r b
-        uniform float uBorderWidth; // pixels
-        uniform vec2  uParentPos;   // pixels
-        uniform vec2  uParentSize;  // pixels
-        uniform vec2  uCanvasSize;  // pixels
-        uniform float uPixelRatio;
-        uniform vec4  uBgColor;
-        uniform vec4  uFgColor;
-        uniform int   uTexX;
-        uniform int   uTexY;
-        uniform int   uNs;
-        uniform int   uNsRange;
-        uniform int   uChannels;
-        uniform vec4  uColor[{MAX_CHANNELS}];
-
-        uniform sampler3D uData;
-
-        void main() {
-            // high DPI display support
-            vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
-
-            // transform to pixel space
-            vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
-                (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
-
-            vec2 fragPos = (fragCoord - rect.xw) / (rect.zy - rect.xw);
-
-            int ns = int(fragPos.x * uNsRange);
-            int ch = uChannels - 1 - int(fragPos.y * uChannels);
-
-            vec3 texPos = vec3((ns % uTexX + .5) / uTexX,
-                (int(float(ns) / uTexX) + .5) / uTexY,
-                (ch + .5) / uChannels);
-
-            if (abs(texture(uData, texPos).r / 2 / uChannels + 1 - texPos.z
-                    - fragPos.y) < 1/(rect.y-rect.w)) {
-                FragColor = uColor[ch % {MAX_COLORS}];
-                int nsDiff = ns - uNs % uNsRange;
-                float fade = 1;
-                if (between(0, nsDiff, uNsRange / 5))
-                    fade = nsDiff / (uNsRange / 5.);
-                else if (between(0, nsDiff + uNsRange, uNsRange / 5))
-                    fade = (nsDiff + uNsRange) / (uNsRange / 5.);
-                FragColor.a = fade;
-            }
-            else discard;
-        }
-        ''' \
-        .replace('{MAX_COLORS}', str(len(defaultColors))) \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
-
-    _properties = dict(tsRange=20)
-
-    def __init__(self, **kwargs):
-        self._initProperties(AnalogPlotTexture._properties, kwargs)
-        super().__init__(**kwargs)
-
-    def __getattr__(self, name):
-        if name in AnalogPlotTexture._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
-
-    def _configured(self, params, sinkParams):
-        super()._configured(params, sinkParams)
-
-        self._tsOffset = 0
-        self._nsRange = int(np.ceil(self.tsRange * self.fs))
-
-        if self._nsRange > max3DTextureSize**2:
-            raise ValueError(
-                'Visible sample count per channel cannot exceed %d' %
-                max3DTextureSize**2)
-
-        if self.channels > maxChannels:
-            raise ValueError('Channel count cannot exceed %d' % maxChannels)
-
-        self._nsDiv = 0
-        for i in range(1, max3DTextureSize):
-            if self.tsRange * i > 1024:
-                break
-            if self.fs % i == 0 and self.fs / i <= 1024:
-                self._nsDiv = i
-                break
-        if not self._nsDiv:
-            raise ValueError('Cannot find division factor for samples')
-
-        self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
-            dtype=np.float32)
-
-        self._texShape = (self.channels, int(self.tsRange*self._nsDiv),
-            int(self.fs/self._nsDiv))
-
-        self._tex = glGenTextures(1)
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_3D, self._tex)
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, self._texShape[2],
-            self._texShape[1], self._texShape[0], 0, GL_RED, GL_FLOAT,
-            self._buffer._data)
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        # glGenerateMipmap(GL_TEXTURE_2D)
-
-        self._prog.setUniform('uTexX', '1i', np.int32(self._texShape[2]))
-        self._prog.setUniform('uTexY', '1i', np.int32(self._texShape[1]))
-        self._prog.setUniform('uNsRange', '1i', np.int32(self._nsRange))
-        self._prog.setUniform('uChannels', '1i', np.int32(self.channels))
-        self._prog.setUniform('uColor', '4fv', (self.channels, defaultColors))
-        # high DPI display support
-        self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
-
-        self._labels = [None] * self.channels
-        for channel in range(self.channels):
-            self._labels[channel] = Text(parent=self, text=str(channel+1),
-                pos=(0, 1-(channel+.5)/self.channels), anchor=(1,.5),
-                margin=(0,0,3+self.margin[0],0), fontSize=16, bold=True,
-                fgColor=defaultColors[channel % len(defaultColors)])
-
-        self._ticks = [None]*11
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/10)):
-            self._ticks[i] = Text(parent=self, text=str(ts),
-                pos=(ts/self._tsRange, 1), anchor=(.5,0),
-                margin=(0,0,0,3+self.margin[1]),
-                fontSize=10, fgColor=self.fgColor, bold=True)
-
-    def _written(self, data, source):
-        with self._buffer:
-            self._buffer.write(data)
-
-        super()._written(data, source)
-
-    def refresh(self):
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/10)):
-            self._ticks[i].text = str(ts + self._tsOffset)
-
-    def draw(self):
-        with self._buffer:
-            tsOffset = (self.ts // self._tsRange) * self._tsRange
-            if tsOffset != self._tsOffset:
-                self._tsOffset = tsOffset
-                self.refresh()
-
-            ns1 = self._buffer.nsRead
-            ns2 = self._buffer.nsWritten
-
-            if ns1 // self._nsRange != ns2 // self._nsRange:
-                xRange = (0, self._texShape[2])
-                yRange = (0, self._texShape[1])
-            else:
-                ns1 %= self._nsRange
-                ns2 %= self._nsRange
-                if ns1 // self._texShape[2] != ns2 // self._texShape[2]:
-                    xRange = (0, self._texShape[2])
-                else:
-                    xRange = (ns1 % self._texShape[2], ns2 % self._texShape[2])
-                yRange = (ns1 // self._texShape[2], ns2 // self._texShape[2]+1)
-            zRange = (0, self.channels)
-
-            ns3 = xRange[0] + yRange[0]*self._texShape[2]
-            ns4 = xRange[1] + (yRange[1]-1)*self._texShape[2]
-            data = self._buffer._data[:,ns3:ns4]
-            self._buffer.read()
-
-            self._prog.setUniform('uNs', '1i', int(self._buffer.nsWritten))
-
-            glActiveTexture(GL_TEXTURE0)
-            glBindTexture(GL_TEXTURE_3D, self._tex)
-            glTexSubImage3D(GL_TEXTURE_3D, 0, xRange[0], yRange[0], zRange[0],
-                xRange[1]-xRange[0], yRange[1]-yRange[0], zRange[1]-zRange[0],
-                GL_RED, GL_FLOAT, data)
-
-        super().draw()
-
-
-class AnalogPlotBuffered(Item, pipeline.Sampled):
     _vertShader = '''
         in vec2 aVertex;
 

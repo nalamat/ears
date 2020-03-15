@@ -28,5 +28,5 @@ x migrate plotting subsystem to vispy and gloo
 - add export for spout training and target training
 + update AnalogPlotBuffered when resized
 - automatic handling of GL context when initializing or refreshing Item
-- fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
++ fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
   for as the newest samples
