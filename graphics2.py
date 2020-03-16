@@ -779,7 +779,7 @@ class AnalogPlot(Item, pipeline.Sampled):
 
             float x = vVertex.x;
             float diff = x - float(uNs % uNsRange) / uNsRange;
-            float fadeRange = .5;
+            float fadeRange = .4;
             float fade = 1;
             if (between(0, diff + 1, fadeRange))
                 fade = (diff + 1) / fadeRange;
@@ -835,7 +835,7 @@ class AnalogPlot(Item, pipeline.Sampled):
         '''
         '''
 
-        self._initProperties(AnalogPlotBuffered._properties, kwargs)
+        self._initProperties(AnalogPlot._properties, kwargs)
         super().__init__(**kwargs)
 
         vertices = np.array([
@@ -853,7 +853,7 @@ class AnalogPlot(Item, pipeline.Sampled):
         self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
         with self._prog:
-            for name, value in AnalogPlotBuffered._uProperties.items():
+            for name, value in AnalogPlot._uProperties.items():
                 self._prog.setUniform(*value, getattr(self, name))
 
             self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
@@ -877,16 +877,16 @@ class AnalogPlot(Item, pipeline.Sampled):
             raise RuntimeError('Framebuffer not complete')
 
     def __getattr__(self, name):
-        if name in AnalogPlotBuffered._properties:
+        if name in AnalogPlot._properties:
             return super().__getattr__('_' + name)
         else:
             return super().__getattr__(name)
 
     def __setattr__(self, name, value):
-        if name in AnalogPlotBuffered._uProperties:
+        if name in AnalogPlot._uProperties:
             super().__setattr__('_' + name, value)
-            self._prog.setUniform(*AnalogPlotBuffered._uProperties[name], value)
-        elif name in AnalogPlotBuffered._properties:
+            self._prog.setUniform(*AnalogPlot._uProperties[name], value)
+        elif name in AnalogPlot._properties:
             super().__setattr__('_' + name, value)
         else:
             super().__setattr__(name, value)
@@ -922,14 +922,6 @@ class AnalogPlot(Item, pipeline.Sampled):
                 pos=(0, 1-(channel+.5)/self.channels), anchor=(1,.5),
                 margin=(0,0,3+self.margin[0],0), fontSize=16, bold=True,
                 fgColor=defaultColors[channel % len(defaultColors)])
-
-        self._ticks = [None]*11
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/10)):
-            self._ticks[i] = Text(parent=self, text=str(ts),
-                pos=(ts/self._tsRange, 1), anchor=(.5,0),
-                margin=(0,0,0,3+self.margin[1]),
-                fontSize=10, fgColor=self.fgColor, bold=True)
 
         self.refresh()
 
@@ -1003,11 +995,6 @@ class AnalogPlot(Item, pipeline.Sampled):
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
         glViewport(*viewport)
 
-    def refreshTicks(self):
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/10)):
-            self._ticks[i].text = str(ts + self._tsOffset)
-
     # TODO: find a better name
     def sub(self, ns1, ns2, data):
         if ns1 == ns2:
@@ -1036,11 +1023,6 @@ class AnalogPlot(Item, pipeline.Sampled):
                 self.sub(ns1, ns2, data)
                 self.refresh(ns1, ns2)
                 self._prog.setUniform('uNs', '1i', self._buffer.nsWritten)
-
-            tsOffset = (self.ts // self._tsRange) * self._tsRange
-            if tsOffset != self._tsOffset:
-                self._tsOffset = tsOffset
-                self.refreshTicks()
 
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, self._tex)
@@ -1144,6 +1126,46 @@ class Figure(Item):
             (pxl < self._posPxl + self._sizePxl)).all()
 
 
+class Scope(Figure, pipeline.Sampled):
+    _properties = dict(tsRange=20)
+
+    def __init__(self, **kwargs):
+        '''
+        '''
+
+        self._initProperties(Scope._properties, kwargs)
+        super().__init__(**kwargs)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._tsOffset = 0
+        self._tickCount = 10
+
+        self._ticks = [None]*(self._tickCount+1)
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/self._tickCount)):
+            self._ticks[i] = Text(parent=self.view,
+                pos=(ts/self._tsRange, 1), anchor=(.5,0), margin=(0,0,0,3),
+                fontSize=10, fgColor=self.fgColor, bold=True)
+
+        self.refresh()
+
+    def refresh(self):
+        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
+                self._tsRange/self._tickCount)):
+            ts2 = ts + self._tsOffset
+            self._ticks[i].text = '%02d:%02d' % (ts2 // 60, ts2 % 60)
+
+    def draw(self):
+        tsOffset = (self.ts // self._tsRange) * self._tsRange
+        if tsOffset != self._tsOffset:
+            self._tsOffset = tsOffset
+            self.refresh()
+
+        super().draw()
+
+
 class Canvas(Item, QtWidgets.QOpenGLWidget):
     @property
     def canvas(self):
@@ -1192,14 +1214,14 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
     def initializeGL(self):
         # initialize graphical items here
         self.fs = 31.25e3
-        self.tsRange = 20
+        self.tsRange = 10
         self.channels = 32
 
-        self._figure = Figure(parent=self, margin=(60,20,20,10))
-        # self._plot = AnalogPlotTexture(parent=self._figure.view, fs=fs,
-        #     tsRange=tsRange, channels=32)
-        self._plot = AnalogPlotBuffered(parent=self._figure.view,
+        self._scope = Scope(parent=self, margin=(60,20,20,10),
             tsRange=self.tsRange)
+        # self._plot = AnalogPlotTexture(parent=self._scope.view, fs=fs,
+        #     tsRange=tsRange, channels=32)
+        self._plot = AnalogPlot(parent=self._scope.view, tsRange=self.tsRange)
 
         # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         self.generator = SineGenerator(fs=self.fs, channels=self.channels,
@@ -1208,7 +1230,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self.grandAvg  = pipeline.GrandAverage()
 
         # self.generator >> self.filter >> self.grandAvg >> self._plot
-        self.generator >> self._plot
+        self.generator >> self._scope >> self._plot
 
         self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
             fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
