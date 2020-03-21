@@ -765,7 +765,28 @@ class Grid(Rectangle):
             self.yTicks = self.yTicks
 
 
-class AnalogPlot(Item, pipeline.Sampled):
+class Plot(Item):
+    def __init__(self, parent, **kwargs):
+        # properties with their default values
+        defaults = dict()
+
+        self._initProps(defaults, kwargs)
+
+        if not isinstance(parent, Figure):
+            raise TypeError('Parent must be a Figure')
+        self._props['figure'] = parent
+        parent = parent.view
+
+        super().__init__(parent, **kwargs)
+
+    def __setattr__(self, name, value):
+        if name in {'figure'}:
+            raise AttributeError('Cannot set attribute')
+
+        super().__setattr__(name, value)
+
+
+class AnalogPlot(Plot, pipeline.Sampled):
     _vertShader = '''
         in vec2 aVertex;
 
@@ -862,9 +883,12 @@ class AnalogPlot(Item, pipeline.Sampled):
         '''
 
         # properties with their default values
-        defaults = dict(tsRange=10)
+        defaults = dict()
 
         self._initProps(defaults, kwargs)
+
+        if not isinstance(parent, Scope):
+            raise TypeError('Parent must be a Scope')
 
         super().__init__(parent, **kwargs)
 
@@ -886,7 +910,7 @@ class AnalogPlot(Item, pipeline.Sampled):
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
 
-        self._nsRange = int(np.ceil(self.tsRange * self.fs))
+        self._nsRange = int(np.ceil(self.figure.tsRange * self.fs))
 
         self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
             dtype=np.float32)
@@ -920,6 +944,8 @@ class AnalogPlot(Item, pipeline.Sampled):
             for name, value in self._uProps.items():
                 self._prog.setUniform(*value, self._props[name])
 
+            self._prog.setUniform('uNsRange', '1i', self._nsRange)
+
             self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
             self._prog.setEBO(indices, GL_STATIC_DRAW)
 
@@ -939,8 +965,6 @@ class AnalogPlot(Item, pipeline.Sampled):
             GL_TEXTURE_2D, self._tex, 0)
         if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError('Framebuffer not complete')
-
-        self._prog.setUniform('uNsRange', '1i', self._nsRange)
 
         self._prog2 = Program(vert=self._vertShader2, frag=self._fragShader2)
 
@@ -1172,9 +1196,7 @@ class Scope(Figure, pipeline.Sampled):
 
         super().__init__(parent, **kwargs)
 
-    def _configured(self, params, sinkParams):
-        super()._configured(params, sinkParams)
-
+    def initializeGL(self):
         self._tsOffset = 0
         self._tickCount = 10
 
@@ -1186,6 +1208,8 @@ class Scope(Figure, pipeline.Sampled):
                 fontSize=10, fgColor=self.fgColor, bold=True)
 
         self.refresh()
+
+        super().initializeGL()
 
     def refresh(self):
         for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
@@ -1217,6 +1241,10 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         self.setMinimumSize(640, 480)
 
+        self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
+            fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
+            align=QtCore.Qt.AlignLeft)
+
         self._drawTimes     = []    # keep last draw times for measuring FPS
         self._drawDurations = []
         self._startTime     = dt.datetime.now()
@@ -1224,7 +1252,6 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._timerDraw = QtCore.QTimer()
         self._timerDraw.timeout.connect(self.update)
         self._timerDraw.setInterval(1000/60)
-        self._timerDraw.start()
 
         self._timerStats = QtCore.QTimer()
         self._timerStats.timeout.connect(self.updateStats)
@@ -1244,10 +1271,6 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._stats.text = stats
 
     def initializeGL(self):
-        self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
-            fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
-            align=QtCore.Qt.AlignLeft)
-
         glEnable(GL_BLEND)
         # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
@@ -1269,6 +1292,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         super().initializeGL()
 
+        self._timerDraw.start()
         self._timerStats.start()
 
     def resizeGL(self, w, h):
@@ -1451,9 +1475,9 @@ class MainWindow(QtWidgets.QWidget):
         self.canvas = Canvas(self)
         self.canvas.stats = lambda: '%.1f s\n%d' % (self.plot.ts, self.plot.ns)
 
-        self.scope = Scope(parent=self.canvas, margin=(60,20,20,10),
+        self.scope = Scope(self.canvas, margin=(60,20,20,10),
             tsRange=self.tsRange)
-        self.plot = AnalogPlot(parent=self.scope.view, tsRange=self.tsRange)
+        self.plot = AnalogPlot(self.scope)
 
         self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
