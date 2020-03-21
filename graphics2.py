@@ -251,7 +251,7 @@ class Item:
         else:
             return None
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         Args:
             parent
@@ -262,20 +262,13 @@ class Item:
             fgColor (3 floats): Foreground color for border and texts.
         '''
 
-        # properties with their default values, chain with child class's
+        # properties with their default values
         defaults = dict(pos=(0,0), size=(1,1), margin=(0,0,0,0),
             bgColor=(1,1,1,0), fgColor=(0,0,0,1), visible=True)
-        defaults.update(childDefaults)
 
-        # initialize properties with the given or default values
-        # setter monitoring (refreshing, etc) won't apply here
-        self._props = dict()
+        self._initProps(defaults, kwargs)
 
-        for name, default in defaults.items():
-            if name in kwargs:
-                self._props[name] = kwargs[name]
-            else:
-                self._props[name] = default
+        super().__init__()
 
         self._props['parent']  = parent
         self._props['posPxl']  = np.array([0, 0])
@@ -285,7 +278,19 @@ class Item:
         if isinstance(self.parent, Item):
             self.parent.addItem(self)
 
-        super().__init__()
+    def _initProps(self, defaults, kwargs):
+        # initialize properties with the given or default values
+        # setter monitoring (refreshing, etc) won't apply here
+        if not hasattr(self, '_props'):
+            self._props = dict()
+
+        for name, default in defaults.items():
+            if name in self._props:
+                continue
+            elif name in kwargs:
+                self._props[name] = kwargs[name]
+            else:
+                self._props[name] = default
 
     def __getattr__(self, name):
         if name != '_props' and hasattr(self, '_props') and name in self._props:
@@ -385,7 +390,7 @@ class Text(Item):
 
         return rect.width(), rect.height()
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         Args:
             text (str)
@@ -402,13 +407,14 @@ class Text(Item):
             visible (bool)
         '''
 
-        # properties with their default values, chain with child class's
+        # properties with their default values
         defaults = dict(text='', pos=(.5,.5), anchor=(.5,.5), margin=(0,0,0,0),
             fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
             bgColor=(1,1,1,0), fgColor=(0,0,0,1))
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -580,15 +586,16 @@ class Rectangle(Item):
         }
         '''
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         '''
 
-        # properties with their default values, chain with child class's
+        # properties with their default values
         defaults = dict(borderWidth=1)
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -693,12 +700,13 @@ class Grid(Rectangle):
         ''' \
         .replace('{MAX_TICKS}', str(MAX_TICKS))
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
-        # properties with their default values, chain with child class's
+    def __init__(self, parent, **kwargs):
+        # properties with their default values
         defaults = dict(xTicks=[], yTicks=[])
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         # set uniforms
         with self._prog:
@@ -820,15 +828,16 @@ class AnalogPlot(Item, pipeline.Sampled):
         .replace('{MAX_COLORS}', str(len(defaultColors))) \
         .replace('{MAX_CHANNELS}', str(maxChannels))
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         '''
 
         # properties with their default values
         defaults = dict(tsRange=10)
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -1022,15 +1031,16 @@ class AnalogPlot(Item, pipeline.Sampled):
 
 
 class Figure(Item):
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         '''
 
-        # properties with their default values, chain with child class's
+        # properties with their default values
         defaults = dict(borderWidth=2, zoom=(1,1), pan=(0,0))
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         # view holds all plots
         self._props['view'] = Item(parent=self, pos=(0,0), size=(1,1),
@@ -1115,15 +1125,16 @@ class Figure(Item):
 
 
 class Scope(Figure, pipeline.Sampled):
-    def __init__(self, parent, childDefaults={}, **kwargs):
+    def __init__(self, parent, **kwargs):
         '''
         '''
 
-        # properties with their default values, chain with child class's
+        # properties with their default values
         defaults = dict(tsRange=10)
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
@@ -1160,12 +1171,13 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
     def canvas(self):
         return self
 
-    def __init__(self, parent, childDefaults={}, **kwargs):
-        # properties with their default values, chain with child class's
+    def __init__(self, parent, **kwargs):
+        # properties with their default values
         defaults = dict(bgColor=(1,1,1,1))
-        defaults.update(childDefaults)
 
-        super().__init__(parent, defaults, **kwargs)
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
 
         self.setMinimumSize(640, 480)
 
@@ -1201,8 +1213,6 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         self._scope = Scope(parent=self, margin=(60,20,20,10),
             tsRange=self.tsRange)
-        # self._plot = AnalogPlotTexture(parent=self._scope.view, fs=fs,
-        #     tsRange=tsRange, channels=32)
         self._plot = AnalogPlot(parent=self._scope.view, tsRange=self.tsRange)
 
         self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
