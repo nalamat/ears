@@ -273,6 +273,7 @@ class Item:
         self._props['parent']  = parent
         self._props['posPxl']  = np.array([0, 0])
         self._props['sizePxl'] = np.array([1, 1])
+        self._initialized = False
         self._items = []
 
         if isinstance(self.parent, Item):
@@ -302,7 +303,12 @@ class Item:
         if name != '_props' and hasattr(self, '_props') and name in self._props:
             if name in {'parent', 'posPxl', 'sizePxl'}:
                 raise AttributeError('Cannot set attribute')
+
             self._props[name] = value
+
+            if name in {'pos', 'size', 'margin'}:
+                self.resize()
+
         else:
             super().__setattr__(name, value)
 
@@ -317,8 +323,13 @@ class Item:
             if hasattr(item, func):
                 getattr(item, func)(*args, **kwargs)
 
+    # initally called from Canvas.initializeGL
+    def initializeGL(self):
+        self._initialized = True
+        self.callItems('initializeGL')
+
     # initally called from Canvas.resizeGL
-    def resized(self):
+    def resizeGL(self):
         parent = self.parent
         margin = np.array(self.margin)
 
@@ -327,11 +338,14 @@ class Item:
         self._props['sizePxl'] = self.size * parent.sizePxl - \
             margin[0:2] - margin[2:4]
 
-        self.callItems('resized')
+        self.callItems('resizeGL')
 
-    # chained functions
-    _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
-        'on_mouse_release', 'on_key_release', 'draw', 'refresh']
+    # initally called from Canvas.paintGL
+    def paintGL(self):
+        self.callItems('paintGL')
+
+    # functions chained to all child items
+    _funcs = []
     for func in _funcs:
         exec('def %(func)s(self, *args, **kwargs):\n'
             '    self.callItems("%(func)s", *args, **kwargs)' % {'func':func})
@@ -416,6 +430,20 @@ class Text(Item):
 
         super().__init__(parent, **kwargs)
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+        if name in {'text', 'margin', 'fontSize', 'bold', 'italic',
+                'align', 'bgColor', 'fgColor'}:
+            self.refresh()
+
+    def initializeGL(self):
         vertices = np.array([
             [0, 0],
             [0, 1],
@@ -453,24 +481,15 @@ class Text(Item):
 
         self.refresh()
 
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
+        super().initializeGL()
 
-        if name != '_uProps' and hasattr(self, '_uProps') and \
-                name in self._uProps:
-            self._prog.setUniform(*self._uProps[name], value)
+    def resizeGL(self):
+        super().resizeGL()
 
-        if name in {'text', 'margin', 'fontSize', 'bold', 'italic',
-                'align', 'bgColor', 'fgColor'}:
-            self.refresh()
-
-    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
-
-        super().resized()
 
     def refresh(self):
         '''Generates texture for the given text, font, color, etc.
@@ -512,7 +531,7 @@ class Text(Item):
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         # glGenerateMipmap(GL_TEXTURE_2D)
 
-    def draw(self):
+    def paintGL(self):
         if not self.visible: return
 
         glActiveTexture(GL_TEXTURE0)
@@ -521,7 +540,7 @@ class Text(Item):
         with self._prog:
             glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
 
-        super().draw()
+        super().paintGL()
 
 
 class Rectangle(Item):
@@ -597,6 +616,16 @@ class Rectangle(Item):
 
         super().__init__(parent, **kwargs)
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+    def initializeGL(self):
         vertices = np.array([
             [0, 0],
             [0, 1],
@@ -626,29 +655,24 @@ class Rectangle(Item):
             self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
             self._prog.setEBO(self._indices, GL_STATIC_DRAW)
 
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
+        super().initializeGL()
 
-        if name != '_uProps' and hasattr(self, '_uProps') and \
-                name in self._uProps:
-            self._prog.setUniform(*self._uProps[name], value)
+    def resizeGL(self):
+        super().resizeGL()
 
-    def resized(self):
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-        super().resized()
-
-    def draw(self):
+    def paintGL(self):
         if not self.visible: return
 
         with self._prog:
             glDrawElements(GL_TRIANGLES, self._indices.size,
                 GL_UNSIGNED_INT, c_void_p(0))
 
-        super().draw()
+        super().paintGL()
 
 
 class Grid(Rectangle):
@@ -708,11 +732,6 @@ class Grid(Rectangle):
 
         super().__init__(parent, **kwargs)
 
-        # set uniforms
-        with self._prog:
-            self.xTicks = self.xTicks
-            self.yTicks = self.yTicks
-
     def __setattr__(self, name, value):
         # verify value
         if name in {'xTicks', 'yTicks'}:
@@ -721,6 +740,8 @@ class Grid(Rectangle):
 
         # set attribute
         super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
 
         # set uniforms
         if name == 'xTicks':
@@ -734,6 +755,14 @@ class Grid(Rectangle):
                 self._prog.setUniform('uYTickCount', '1i', len(self.yTicks))
                 self._prog.setUniform('uYTicks', '1fv',
                     (len(self.yTicks), self.yTicks))
+
+    def initializeGL(self):
+        super().initializeGL()
+
+        # set uniforms
+        with self._prog:
+            self.xTicks = self.xTicks
+            self.yTicks = self.yTicks
 
 
 class AnalogPlot(Item, pipeline.Sampled):
@@ -839,6 +868,36 @@ class AnalogPlot(Item, pipeline.Sampled):
 
         super().__init__(parent, **kwargs)
 
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        if params['channels'] > maxChannels:
+            raise ValueError('Channel count cannot exceed %d' % maxChannels)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._nsRange = int(np.ceil(self.tsRange * self.fs))
+
+        self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
+            dtype=np.float32)
+
+    def _written(self, data, source):
+        with self._buffer:
+            self._buffer.write(data)
+
+        super()._written(data, source)
+
+    def initializeGL(self):
         vertices = np.array([
             [0, 0],
             [0, 1],
@@ -881,26 +940,7 @@ class AnalogPlot(Item, pipeline.Sampled):
         if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError('Framebuffer not complete')
 
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-
-        if name != '_uProps' and hasattr(self, '_uProps') and \
-                name in self._uProps:
-            self._prog.setUniform(*self._uProps[name], value)
-
-    def _configured(self, params, sinkParams):
-        super()._configured(params, sinkParams)
-
-        self._tsOffset = 0
-        self._nsRange = int(np.ceil(self.tsRange * self.fs))
-
         self._prog.setUniform('uNsRange', '1i', self._nsRange)
-
-        if self.channels > maxChannels:
-            raise ValueError('Channel count cannot exceed %d' % maxChannels)
-
-        self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
-            dtype=np.float32)
 
         self._prog2 = Program(vert=self._vertShader2, frag=self._fragShader2)
 
@@ -922,14 +962,10 @@ class AnalogPlot(Item, pipeline.Sampled):
 
         self.refresh()
 
-    def _written(self, data, source):
-        with self._buffer:
-            self._buffer.write(data)
+        super().initializeGL()
 
-        super()._written(data, source)
-
-    def resized(self):
-        super().resized()
+    def resizeGL(self):
+        super().resizeGL()
 
         with self._prog:
             self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
@@ -1009,7 +1045,7 @@ class AnalogPlot(Item, pipeline.Sampled):
                     (i * self._nsRange + ns1) * sizeFloat,
                     data[i, :])
 
-    def draw(self):
+    def paintGL(self):
         if not self.visible: return
 
         with self._buffer:
@@ -1027,7 +1063,7 @@ class AnalogPlot(Item, pipeline.Sampled):
         with self._prog:
             glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, c_void_p(0))
 
-        super().draw()
+        super().paintGL()
 
 
 class Figure(Item):
@@ -1157,13 +1193,13 @@ class Scope(Figure, pipeline.Sampled):
             ts2 = ts + self._tsOffset
             self._ticks[i].text = '%02d:%02d' % (ts2 // 60, ts2 % 60)
 
-    def draw(self):
+    def paintGL(self):
         tsOffset = (self.ts // self.tsRange) * self.tsRange
         if tsOffset != self._tsOffset:
             self._tsOffset = tsOffset
             self.refresh()
 
-        super().draw()
+        super().paintGL()
 
 
 class Canvas(Item, QtWidgets.QOpenGLWidget):
@@ -1200,31 +1236,14 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._fps = fps
 
         drawDuration = np.mean(self._drawDurations)
+
+        stats = '%.1f Hz\n%.2f ms' % (fps, drawDuration*1e3)
+        if hasattr(self, 'stats'): stats += '\n' + self.stats()
+
         self.makeCurrent()
-        self._stats.text = '%.1f Hz\n%.2f ms\n%.1f s\n%d' % \
-            (fps, drawDuration*1e3,
-            self._plot.ts, self._plot.ns)
+        self._stats.text = stats
 
     def initializeGL(self):
-        # initialize graphical items here
-        self.fs = 31.25e3
-        self.tsRange = 10
-        self.channels = 16
-
-        self._scope = Scope(parent=self, margin=(60,20,20,10),
-            tsRange=self.tsRange)
-        self._plot = AnalogPlot(parent=self._scope.view, tsRange=self.tsRange)
-
-        self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
-        # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
-        #     noisy=True)
-        self.filter    = pipeline.LFilter(fl=100, fh=6000)
-        self.grandAvg  = pipeline.GrandAverage()
-
-        self.generator >> self.filter >> self.grandAvg \
-            >> self._scope >> self._plot
-        # self.generator >> self._scope >> self._plot
-
         self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
             fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
             align=QtCore.Qt.AlignLeft)
@@ -1248,13 +1267,15 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
             glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE)
             ))
 
+        super().initializeGL()
+
         self._timerStats.start()
-        self.generator.start()
 
     def resizeGL(self, w, h):
         self._props['posPxl'] = np.array([0, 0])
         self._props['sizePxl'] = np.array([w, h])
-        self.callItems('resized')
+        # do not call super().resizeGL() in Canvas
+        self.callItems('resizeGL')
 
     def paintGL(self):
         if hasattr(self, '_drawLast'):
@@ -1266,7 +1287,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT) # | GL_DEPTH_BUFFER_BIT)
 
-        self.callItems('draw')
+        super().paintGL()
 
         glFlush()
 
@@ -1423,22 +1444,42 @@ class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle('OpenGL Demo')
-        self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
+        self.fs = 31.25e3
+        self.tsRange = 10
+        self.channels = 16
 
         self.canvas = Canvas(self)
+        self.canvas.stats = lambda: '%.1f s\n%d' % (self.plot.ts, self.plot.ns)
+
+        self.scope = Scope(parent=self.canvas, margin=(60,20,20,10),
+            tsRange=self.tsRange)
+        self.plot = AnalogPlot(parent=self.scope.view, tsRange=self.tsRange)
+
+        self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
+        # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
+        #     noisy=True)
+        self.filter    = pipeline.LFilter(fl=100, fh=6000)
+        self.grandAvg  = pipeline.GrandAverage()
+
+        self.generator >> self.filter >> self.grandAvg \
+            >> self.scope >> self.plot
+        # self.generator >> self.scope >> self.plot
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
         mainLayout.addWidget(self.canvas)
 
         self.setLayout(mainLayout)
+        self.setWindowTitle('OpenGL Demo')
+        self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
+
+        self.generator.start()
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Space:
             # print('Space pressed')
-            if self.canvas.generator.paused: self.canvas.generator.start()
-            else: self.canvas.generator.pause()
+            if self.generator.paused: self.generator.start()
+            else: self.generator.pause()
 
 
 if __name__ == '__main__':
