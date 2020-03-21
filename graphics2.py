@@ -243,6 +243,7 @@ class Program:
 
 class Item:
     '''Graphical item capable of containing child items.'''
+
     @property
     def canvas(self):
         if self.parent:
@@ -250,11 +251,7 @@ class Item:
         else:
             return None
 
-    # properties with their default values
-    _properties = dict(parent=None, pos=(0,0), size=(1,1), margin=(0,0,0,0),
-        bgColor=(1,1,1,0), fgColor=(0,0,0,1), visible=True)
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         Args:
             parent
@@ -264,42 +261,45 @@ class Item:
             bgColor (3 floats): Backgoround color.
             fgColor (3 floats): Foreground color for border and texts.
         '''
-        super().__init__()
-        self._initProperties(Item._properties, kwargs)
 
-        self._posPxl    = np.array([0, 0])
-        self._sizePxl   = np.array([1, 1])
-        self._items     = []
+        # properties with their default values, chain with child class's
+        defaults = dict(pos=(0,0), size=(1,1), margin=(0,0,0,0),
+            bgColor=(1,1,1,0), fgColor=(0,0,0,1), visible=True)
+        defaults.update(childDefaults)
 
-        if self.parent:
+        # initialize properties with the given or default values
+        # setter monitoring (refreshing, etc) won't apply here
+        self._props = dict()
+
+        for name, default in defaults.items():
+            if name in kwargs:
+                self._props[name] = kwargs[name]
+            else:
+                self._props[name] = default
+
+        self._props['parent']  = parent
+        self._props['posPxl']  = np.array([0, 0])
+        self._props['sizePxl'] = np.array([1, 1])
+        self._items = []
+
+        if isinstance(self.parent, Item):
             self.parent.addItem(self)
 
+        super().__init__()
+
     def __getattr__(self, name):
-        if name in Item._properties or name in {'posPxl', 'sizePxl'}:
-            return super().__getattribute__('_' + name)
+        if name != '_props' and hasattr(self, '_props') and name in self._props:
+            return self._props[name]
         else:
             return super().__getattribute__(name)
 
     def __setattr__(self, name, value):
-        if name in {'bgColor', 'fgColor'}:
-            super().__setattr__('_' + name, value)
-        if name == 'parent':
-            super().__setattr__('_' + name, value)
-            if value:
-                value.addItem(self)
+        if name != '_props' and hasattr(self, '_props') and name in self._props:
+            if name in {'parent', 'posPxl', 'sizePxl'}:
+                raise AttributeError('Cannot set attribute')
+            self._props[name] = value
         else:
             super().__setattr__(name, value)
-
-    def _initProperties(self, properties, kwargs):
-        # initialize properties with the given or default values
-        # setter monitoring (refreshing, etc) won't apply here
-        for name, default in properties.items():
-            if hasattr(self, '_' + name):
-                continue
-            elif name in kwargs:
-                setattr(self, '_' + name, kwargs[name])
-            else:
-                setattr(self, '_' + name, default)
 
     def addItem(self, item):
         if not isinstance(item, Item):
@@ -317,11 +317,14 @@ class Item:
         parent = self.parent
         margin = np.array(self.margin)
 
-        self._posPxl = self.pos * parent.sizePxl + parent.posPxl + margin[[0,3]]
-        self._sizePxl = self.size * parent.sizePxl - margin[0:2] - margin[2:4]
+        self._props['posPxl'] = self.pos * parent.sizePxl + \
+            parent.posPxl + margin[[0,3]]
+        self._props['sizePxl'] = self.size * parent.sizePxl - \
+            margin[0:2] - margin[2:4]
 
         self.callItems('resized')
 
+    # chained functions
     _funcs = ['on_mouse_wheel', 'on_mouse_press', 'on_mouse_move',
         'on_mouse_release', 'on_key_release', 'draw', 'refresh']
     for func in _funcs:
@@ -382,14 +385,7 @@ class Text(Item):
 
         return rect.width(), rect.height()
 
-    # properties with their default values
-    _properties = dict(text='', pos=(.5,.5), anchor=(.5,.5), margin=(0,0,0,0),
-        fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
-        bgColor=(1,1,1,0), fgColor=(0,0,0,1))
-
-    _uProperties = dict(pos=('uPos', '2f'), anchor=('uAnchor', '2f'))
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         Args:
             text (str)
@@ -406,8 +402,13 @@ class Text(Item):
             visible (bool)
         '''
 
-        self._initProperties(Text._properties, kwargs)
-        super().__init__(**kwargs)
+        # properties with their default values, chain with child class's
+        defaults = dict(text='', pos=(.5,.5), anchor=(.5,.5), margin=(0,0,0,0),
+            fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
+            bgColor=(1,1,1,0), fgColor=(0,0,0,1))
+        defaults.update(childDefaults)
+
+        super().__init__(parent, defaults, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -432,30 +433,30 @@ class Text(Item):
 
         self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
-        for name, value in Text._uProperties.items():
-            self._prog.setUniform(*value, getattr(self, name))
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), anchor=('uAnchor', '2f'))
 
-        self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
-        self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords, GL_STATIC_DRAW)
-        self._prog.setEBO(indices, GL_STATIC_DRAW)
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+
+            self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
+            self._prog.setVBO('aTexCoord', GL_FLOAT, 2, texCoords,
+                GL_STATIC_DRAW)
+            self._prog.setEBO(indices, GL_STATIC_DRAW)
 
         self.refresh()
 
-    def __getattr__(self, name):
-        if name in Text._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
-
     def __setattr__(self, name, value):
-        if name in Text._uProperties:
-            super().__setattr__('_' + name, value)
-            self._prog.setUniform(*Text._uProperties[name], value)
-        elif name in Text._properties:
-            super().__setattr__('_' + name, value)
+        super().__setattr__(name, value)
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+        if name in {'text', 'margin', 'fontSize', 'bold', 'italic',
+                'align', 'bgColor', 'fgColor'}:
             self.refresh()
-        else:
-            super().__setattr__(name, value)
 
     def resized(self):
         with self._prog:
@@ -579,19 +580,15 @@ class Rectangle(Item):
         }
         '''
 
-    _properties = dict(borderWidth=1)
-
-    # mapping of properties to GLSL uniform variables
-    _uProperties = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
-        margin=('uMargin', '4f'), borderWidth=('uBorderWidth', '1f'),
-        bgColor=('uBgColor', '4f'), fgColor=('uFgColor', '4f'))
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         '''
 
-        self._initProperties(Rectangle._properties, kwargs)
-        super().__init__(**kwargs)
+        # properties with their default values, chain with child class's
+        defaults = dict(borderWidth=1)
+        defaults.update(childDefaults)
+
+        super().__init__(parent, defaults, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -608,26 +605,26 @@ class Rectangle(Item):
         self._prog = Program(vert=self._vertShader,
                              frag=self._fragShader)
 
-        for name, value in Rectangle._uProperties.items():
-            self._prog.setUniform(*value, getattr(self, name))
-        # high DPI display support
-        self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'), borderWidth=('uBorderWidth', '1f'),
+            bgColor=('uBgColor', '4f'), fgColor=('uFgColor', '4f'))
 
-        self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
-        self._prog.setEBO(self._indices, GL_STATIC_DRAW)
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+            # high DPI display support
+            self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
 
-    def __getattr__(self, name):
-        if name in Rectangle._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
+            self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
+            self._prog.setEBO(self._indices, GL_STATIC_DRAW)
 
     def __setattr__(self, name, value):
-        if name in Rectangle._uProperties:
-            super().__setattr__('_' + name, value)
-            self._prog.setUniform(*Rectangle._uProperties[name], value)
-        else:
-            super().__setattr__(name, value)
+        super().__setattr__(name, value)
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
 
     def resized(self):
         with self._prog:
@@ -696,42 +693,39 @@ class Grid(Rectangle):
         ''' \
         .replace('{MAX_TICKS}', str(MAX_TICKS))
 
-    _properties = dict(xTicks=[], yTicks=[])
+    def __init__(self, parent, childDefaults={}, **kwargs):
+        # properties with their default values, chain with child class's
+        defaults = dict(xTicks=[], yTicks=[])
+        defaults.update(childDefaults)
 
-    def __init__(self, **kwargs):
-        self._initProperties(Grid._properties, kwargs)
-        super().__init__(**kwargs)
+        super().__init__(parent, defaults, **kwargs)
 
         # set uniforms
         with self._prog:
             self.xTicks = self.xTicks
             self.yTicks = self.yTicks
 
-    def __getattr__(self, name):
-        if name in Grid._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
-
     def __setattr__(self, name, value):
-        if name == 'xTicks':
+        # verify value
+        if name in {'xTicks', 'yTicks'}:
             if len(value) > Grid.MAX_TICKS:
                 raise ValueError('Tick count cannot exceed %d' % Grid.MAX_TICKS)
-            super().__setattr__('_' + name, value)
+
+        # set attribute
+        super().__setattr__(name, value)
+
+        # set uniforms
+        if name == 'xTicks':
             with self._prog:
                 self._prog.setUniform('uXTickCount', '1i', len(self.xTicks))
                 self._prog.setUniform('uXTicks', '1fv',
                     (len(self.xTicks), self.xTicks))
+
         elif name == 'yTicks':
-            if len(value) > Grid.MAX_TICKS:
-                raise ValueError('Tick count cannot exceed %d' % Grid.MAX_TICKS)
-            super().__setattr__('_' + name, value)
             with self._prog:
                 self._prog.setUniform('uYTickCount', '1i', len(self.yTicks))
                 self._prog.setUniform('uYTicks', '1fv',
                     (len(self.yTicks), self.yTicks))
-        else:
-            super().__setattr__(name, value)
 
 
 class AnalogPlot(Item, pipeline.Sampled):
@@ -826,17 +820,15 @@ class AnalogPlot(Item, pipeline.Sampled):
         .replace('{MAX_COLORS}', str(len(defaultColors))) \
         .replace('{MAX_CHANNELS}', str(maxChannels))
 
-    _properties = dict(tsRange=20)
-
-    _uProperties = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
-        margin=('uMargin', '4f'))
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         '''
 
-        self._initProperties(AnalogPlot._properties, kwargs)
-        super().__init__(**kwargs)
+        # properties with their default values
+        defaults = dict(tsRange=10)
+        defaults.update(childDefaults)
+
+        super().__init__(parent, defaults, **kwargs)
 
         vertices = np.array([
             [0, 0],
@@ -852,9 +844,13 @@ class AnalogPlot(Item, pipeline.Sampled):
 
         self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'))
+
         with self._prog:
-            for name, value in AnalogPlot._uProperties.items():
-                self._prog.setUniform(*value, getattr(self, name))
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
 
             self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
             self._prog.setEBO(indices, GL_STATIC_DRAW)
@@ -876,20 +872,12 @@ class AnalogPlot(Item, pipeline.Sampled):
         if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError('Framebuffer not complete')
 
-    def __getattr__(self, name):
-        if name in AnalogPlot._properties:
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
-
     def __setattr__(self, name, value):
-        if name in AnalogPlot._uProperties:
-            super().__setattr__('_' + name, value)
-            self._prog.setUniform(*AnalogPlot._uProperties[name], value)
-        elif name in AnalogPlot._properties:
-            super().__setattr__('_' + name, value)
-        else:
-            super().__setattr__(name, value)
+        super().__setattr__(name, value)
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
 
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
@@ -1034,21 +1022,21 @@ class AnalogPlot(Item, pipeline.Sampled):
 
 
 class Figure(Item):
-    _properties = dict(borderWidth=2, zoom=(1,1),
-        pan=(0,0))
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         '''
 
-        self._initProperties(Figure._properties, kwargs)
-        super().__init__(**kwargs)
+        # properties with their default values, chain with child class's
+        defaults = dict(borderWidth=2, zoom=(1,1), pan=(0,0))
+        defaults.update(childDefaults)
 
-        # view holds all plots and manages pan and zoom
-        self._view = Item(parent=self, pos=(0,0), size=(1,1),
+        super().__init__(parent, defaults, **kwargs)
+
+        # view holds all plots
+        self._props['view'] = Item(parent=self, pos=(0,0), size=(1,1),
             margin=(self.borderWidth,)*4)
 
-        self._grid = Grid(parent=self.view,
+        self._props['grid'] = Grid(parent=self.view,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
             xTicks=np.arange(1, 19.1)/20, yTicks=np.arange(1, 15.1)/16)
 
@@ -1057,11 +1045,11 @@ class Figure(Item):
             borderWidth=self.borderWidth, bgColor=self.bgColor,
             fgColor=self.fgColor)
 
-    def __getattr__(self, name):
-        if name in Figure._properties or name == 'view':
-            return super().__getattr__('_' + name)
-        else:
-            return super().__getattr__(name)
+    def __setattr__(self, name, value):
+        if name in {'view', 'gird'}:
+            raise AttributeError('Cannot set attribute')
+
+        return super().__setattr__(name, value)
 
     def _pxl2nrmView(self, pxlDelta):
         # translate a delta (dx, dy) from pixels to normalized in view space
@@ -1122,19 +1110,20 @@ class Figure(Item):
             self.pan  = [0, 0]
 
     def isInside(self, posPxl):
-        return ((self._posPxl < posPxl) &
-            (pxl < self._posPxl + self._sizePxl)).all()
+        return ((self.posPxl < posPxl) &
+            (pxl < self.posPxl + self.sizePxl)).all()
 
 
 class Scope(Figure, pipeline.Sampled):
-    _properties = dict(tsRange=20)
-
-    def __init__(self, **kwargs):
+    def __init__(self, parent, childDefaults={}, **kwargs):
         '''
         '''
 
-        self._initProperties(Scope._properties, kwargs)
-        super().__init__(**kwargs)
+        # properties with their default values, chain with child class's
+        defaults = dict(tsRange=10)
+        defaults.update(childDefaults)
+
+        super().__init__(parent, defaults, **kwargs)
 
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
@@ -1143,22 +1132,22 @@ class Scope(Figure, pipeline.Sampled):
         self._tickCount = 10
 
         self._ticks = [None]*(self._tickCount+1)
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/self._tickCount)):
+        for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
+                self.tsRange/self._tickCount)):
             self._ticks[i] = Text(parent=self.view,
-                pos=(ts/self._tsRange, 1), anchor=(.5,0), margin=(0,0,0,3),
+                pos=(ts/self.tsRange, 1), anchor=(.5,0), margin=(0,0,0,3),
                 fontSize=10, fgColor=self.fgColor, bold=True)
 
         self.refresh()
 
     def refresh(self):
-        for i, ts in enumerate(np.arange(0, self._tsRange*1.01,
-                self._tsRange/self._tickCount)):
+        for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
+                self.tsRange/self._tickCount)):
             ts2 = ts + self._tsOffset
             self._ticks[i].text = '%02d:%02d' % (ts2 // 60, ts2 % 60)
 
     def draw(self):
-        tsOffset = (self.ts // self._tsRange) * self._tsRange
+        tsOffset = (self.ts // self.tsRange) * self.tsRange
         if tsOffset != self._tsOffset:
             self._tsOffset = tsOffset
             self.refresh()
@@ -1171,19 +1160,12 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
     def canvas(self):
         return self
 
-    # `parent` needs to be defined out of __getattr__ to override
-    # QOpenGLWidget's property
-    @property
-    def parent(self):
-        return self._parent
+    def __init__(self, parent, childDefaults={}, **kwargs):
+        # properties with their default values, chain with child class's
+        defaults = dict(bgColor=(1,1,1,1))
+        defaults.update(childDefaults)
 
-    # properties with their default values
-    _properties = dict(bgColor=(1,1,1,1))
-
-    def __init__(self, **kwargs):
-        self._initProperties(Canvas._properties, kwargs)
-
-        super().__init__(**kwargs)
+        super().__init__(parent, defaults, **kwargs)
 
         self.setMinimumSize(640, 480)
 
@@ -1208,14 +1190,14 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         drawDuration = np.mean(self._drawDurations)
         self.makeCurrent()
         self._stats.text = '%.1f Hz\n%.2f ms\n%.1f s\n%d' % \
-            (fps, drawDuration*1e3, self._plot.ts,
-            self._plot.ns)
+            (fps, drawDuration*1e3,
+            self._plot.ts, self._plot.ns)
 
     def initializeGL(self):
         # initialize graphical items here
         self.fs = 31.25e3
         self.tsRange = 10
-        self.channels = 32
+        self.channels = 16
 
         self._scope = Scope(parent=self, margin=(60,20,20,10),
             tsRange=self.tsRange)
@@ -1223,14 +1205,15 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         #     tsRange=tsRange, channels=32)
         self._plot = AnalogPlot(parent=self._scope.view, tsRange=self.tsRange)
 
-        # self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
-        self.generator = SineGenerator(fs=self.fs, channels=self.channels,
-            noisy=True)
+        self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
+        # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
+        #     noisy=True)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 
-        # self.generator >> self.filter >> self.grandAvg >> self._plot
-        self.generator >> self._scope >> self._plot
+        self.generator >> self.filter >> self.grandAvg \
+            >> self._scope >> self._plot
+        # self.generator >> self._scope >> self._plot
 
         self._stats = Text(parent=self, text='0', pos=(0,1), anchor=(0,1),
             fgColor=self.fgColor, fontSize=8, bold=True, margin=(2,)*4,
@@ -1259,8 +1242,8 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self.generator.start()
 
     def resizeGL(self, w, h):
-        self._posPxl = np.array([0, 0])
-        self._sizePxl = np.array([w, h])
+        self._props['posPxl'] = np.array([0, 0])
+        self._props['sizePxl'] = np.array([w, h])
         self.callItems('resized')
 
     def paintGL(self):
@@ -1433,7 +1416,7 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle('OpenGL Demo')
         self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
-        self.canvas = Canvas()
+        self.canvas = Canvas(self)
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
