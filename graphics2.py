@@ -566,7 +566,7 @@ class Rectangle(Item):
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
             // apply transformation to vertex and take to NDC space
-            gl_Position = vec4( (aVertex * size + pos) * 2 - vec2(1), 0, 1);
+            gl_Position = vec4((aVertex * size + pos) * 2 - vec2(1), 0, 1);
         }
         '''
 
@@ -638,13 +638,12 @@ class Rectangle(Item):
             [0, 2, 3],
             ], dtype=np.uint32)
 
-        self._prog = Program(vert=self._vertShader,
-                             frag=self._fragShader)
-
         # properties linked with a uniform variable in the shader
         self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
             margin=('uMargin', '4f'), borderWidth=('uBorderWidth', '1f'),
             bgColor=('uBgColor', '4f'), fgColor=('uFgColor', '4f'))
+
+        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
 
         with self._prog:
             for name, value in self._uProps.items():
@@ -981,7 +980,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
         for channel in range(self.channels):
             self._labels[channel] = Text(parent=self, text=str(channel+1),
                 pos=(0, 1-(channel+.5)/self.channels), anchor=(1,.5),
-                margin=(0,0,3+self.margin[0],0), fontSize=16, bold=True,
+                margin=(0,0,5+self.margin[0],0), fontSize=18, bold=True,
                 fgColor=defaultColors[channel % len(defaultColors)])
 
         self.refresh()
@@ -1090,13 +1089,119 @@ class AnalogPlot(Plot, pipeline.Sampled):
         super().paintGL()
 
 
+class EpochPlot(Plot, pipeline.Node):
+    _vertShader = '''
+        in float aData;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            pos.x += aData * size.x;
+            pos.y += size.y / 2;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4(pos * 2 - vec2(1), 0, 1);
+        }
+        '''
+
+    _geomShader = '''
+        
+        '''
+
+    _fragShader = '''
+        out vec4 FragColor;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uPixelRatio;
+        uniform vec4  uFgColor;
+
+        void main() {
+            // high DPI display support
+            vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
+
+            // transform to pixel space
+            //vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
+            //    (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
+
+            FragColor = uFgColor;
+        }
+        '''
+
+    def __init__(self, parent, **kwargs):
+        defaults = dict(name='', fgColor=(0,0,1,.6))
+
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
+
+    def initializeGL(self):
+        self._data = np.array([
+            [.25, .75],
+            ], dtype=np.float32)
+
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'))
+
+        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
+
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+            # high DPI display support
+            self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
+
+            self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
+
+        self._label = Text(self, text=self.name, pos=(0,.5), anchor=(1,.5),
+                margin=(0,0,5+self.margin[0],0), fontSize=14, bold=True,
+                fgColor=self.fgColor)
+
+        super().initializeGL()
+
+    def resizeGL(self):
+        super().resizeGL()
+
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+    def paintGL(self):
+        if not self.visible: return
+
+        with self._prog:
+            glDrawArrays(GL_LINES, 0, self._data.size)
+
+        super().paintGL()
+
+
 class Figure(Item):
     def __init__(self, parent, **kwargs):
         '''
         '''
 
         # properties with their default values
-        defaults = dict(borderWidth=2, zoom=(1,1), pan=(0,0))
+        defaults = dict(borderWidth=2, zoom=(1,1), pan=(0,0),
+            xTicks=[], yTicks=[])
 
         self._initProps(defaults, kwargs)
 
@@ -1106,9 +1211,9 @@ class Figure(Item):
         self._props['view'] = Item(parent=self, pos=(0,0), size=(1,1),
             margin=(self.borderWidth,)*4)
 
-        self._props['grid'] = Grid(parent=self.view,
+        self._grid = Grid(parent=self.view,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
-            xTicks=np.arange(1, 19.1)/20, yTicks=np.arange(1, 15.1)/16)
+            xTicks=self.xTicks, yTicks=self.yTicks)
 
         # a border around the figure
         self._border = Rectangle(parent=self, pos=(0,0), size=(1,1),
@@ -1116,10 +1221,13 @@ class Figure(Item):
             fgColor=self.fgColor)
 
     def __setattr__(self, name, value):
-        if name in {'view', 'gird'}:
+        if name in {'view'}:
             raise AttributeError('Cannot set attribute')
 
-        return super().__setattr__(name, value)
+        super().__setattr__(name, value)
+
+        if name in {'xTicks', 'yTicks'}:
+            setattr(self._grid, name, value)
 
     def _pxl2nrmView(self, pxlDelta):
         # translate a delta (dx, dy) from pixels to normalized in view space
@@ -1204,7 +1312,7 @@ class Scope(Figure, pipeline.Sampled):
         for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
                 self.tsRange/self._tickCount)):
             self._ticks[i] = Text(parent=self.view,
-                pos=(ts/self.tsRange, 1), anchor=(.5,0), margin=(0,0,0,3),
+                pos=(ts/self.tsRange, 1), anchor=(.5,0), margin=(0,0,0,5),
                 fontSize=10, fgColor=self.fgColor, bold=True)
 
         self.refresh()
@@ -1473,11 +1581,18 @@ class MainWindow(QtWidgets.QWidget):
         self.channels = 16
 
         self.canvas = Canvas(self)
-        self.canvas.stats = lambda: '%.1f s\n%d' % (self.plot.ts, self.plot.ns)
+        self.canvas.stats = lambda: '%.1f s' % (self.physiologyPlot.ts)
 
         self.scope = Scope(self.canvas, margin=(60,20,20,10),
-            tsRange=self.tsRange)
-        self.plot = AnalogPlot(self.scope)
+            tsRange=self.tsRange,
+            xTicks=np.arange(1, self.tsRange)/self.tsRange,
+            yTicks=np.r_[np.arange(0, self.channels)/self.channels * .9 + .1,
+                .05])
+        self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
+        self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
+            name='Target', fgColor=(0,1,0,.6))
+        self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
+            name='Pump', fgColor=(0,0,1,.6))
 
         self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
@@ -1486,8 +1601,8 @@ class MainWindow(QtWidgets.QWidget):
         self.grandAvg  = pipeline.GrandAverage()
 
         self.generator >> self.filter >> self.grandAvg \
-            >> self.scope >> self.plot
-        # self.generator >> self.scope >> self.plot
+            >> self.scope >> self.physiologyPlot
+        # self.generator >> self.scope >> self.physiologyPlot
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
