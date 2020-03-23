@@ -429,16 +429,16 @@ class Sampled(Node):
 
 
 class Auxillary(Sampled):
-    def __init__(self, cbConfigured, cbWritten, **kwargs):
+    def __init__(self, cbConfigured=None, cbWritten=None, **kwargs):
         '''
         Args:
             cbConfigured (callable): Callback when node is configured.
             cbWritten (callable): Callback when data is written to the node.
         '''
 
-        if not callable(cbConfigured):
+        if cbConfigured and not callable(cbConfigured):
             raise TypeError('`cbConfigured` should be callable')
-        if not callable(cbWritten):
+        if cbWritten and not callable(cbWritten):
             raise TypeError('`cbWritten` should be callable')
 
         self._cbConfigured = cbConfigured
@@ -448,11 +448,11 @@ class Auxillary(Sampled):
 
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
-        self._cbConfigured()
+        if self._cbConfigured: self._cbConfigured()
 
     def _written(self, data, source):
         super()._written(data, source)
-        self._cbWritten()
+        if self._cbWritten: self._cbWritten()
 
 
 class LFilter(Sampled):
