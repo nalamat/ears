@@ -128,6 +128,10 @@ class Program:
         bool between(int a, int b, int c) {
             return a <= b && b < c;
         }
+
+        float sinFade(float fade) {
+            return sin((fade*2-1)*3.1415/2)/2+.5;
+        }
         '''
 
     @classmethod
@@ -819,9 +823,10 @@ class AnalogPlot(Plot, pipeline.Sampled):
 
         out vec4 FragColor;
 
-        uniform int  uNs;
-        uniform int  uNsRange;
-        uniform vec2 uTexSize;     // unit
+        uniform int   uNs;
+        uniform int   uNsRange;
+        uniform vec2  uTexSize;     // unit
+        uniform float uFadeRange;   // unit
 
         uniform sampler2D uTexture;
 
@@ -830,15 +835,14 @@ class AnalogPlot(Plot, pipeline.Sampled):
 
             float x = vVertex.x;
             float diff = x - float(uNs % uNsRange) / uNsRange;
-            float fadeRange = .4;
             float fade = 1;
-            if (between(0, diff + 1, fadeRange))
-                fade = (diff + 1) / fadeRange;
+            if (between(0, diff + 1, uFadeRange))
+                fade = (diff + 1) / uFadeRange;
             else if (0 < diff && uNs < uNsRange)
                 fade = 0;
-            else if (between(0, diff, fadeRange))
-                fade = diff / fadeRange;
-            fade = sin((fade*2-1)*3.1415/2)/2+.5;
+            else if (between(0, diff, uFadeRange))
+                fade = diff / uFadeRange;
+            fade = sinFade(fade);
             FragColor.a *= fade;
         }
         '''
@@ -944,6 +948,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
                 self._prog.setUniform(*value, self._props[name])
 
             self._prog.setUniform('uNsRange', '1i', self._nsRange)
+            self._prog.setUniform('uFadeRange', '1f', self.figure.fadeRange)
 
             self._prog.setVBO('aVertex', GL_FLOAT, 2, vertices, GL_STATIC_DRAW)
             self._prog.setEBO(indices, GL_STATIC_DRAW)
@@ -1093,12 +1098,17 @@ class EpochPlot(Plot, pipeline.Node):
     _vertShader = '''
         in float aData;
 
+        out float vTs;    // to geom shader
+
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
         uniform vec4  uMargin;      // pixels: l t r b
         uniform vec2  uParentPos;   // pixels
         uniform vec2  uParentSize;  // pixels
         uniform vec2  uCanvasSize;  // pixels
+
+        uniform float uTs;
+        uniform float uTsRange;
 
         void main() {
             // transform inside parent
@@ -1109,7 +1119,9 @@ class EpochPlot(Plot, pipeline.Node):
             pos += uMargin.xw / uCanvasSize;
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
-            pos.x += aData * size.x;
+            vTs = 0 <= aData && aData <= uTs ? aData : uTs;
+
+            pos.x += (vTs / uTsRange - int(uTs / uTsRange)) * size.x;
             pos.y += size.y / 2;
 
             // apply transformation to vertex and take to NDC space
@@ -1118,10 +1130,91 @@ class EpochPlot(Plot, pipeline.Node):
         '''
 
     _geomShader = '''
-        
+        layout (lines) in;
+        layout (triangle_strip, max_vertices = 8) out;
+
+        in  float vTs[];
+
+        out float gTs;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        uniform float uTs;
+        uniform float uTsRange;
+
+        void emitRectangle(vec4 pos0, vec4 pos1, float sizeY) {
+            gl_Position = pos0 + vec4(0, +sizeY, 0, 0);
+            gTs = vTs[0];
+            EmitVertex();
+
+            gl_Position = pos0 + vec4(0, -sizeY, 0, 0);
+            gTs = vTs[0];
+            EmitVertex();
+
+            gl_Position = pos1 + vec4(0, +sizeY, 0, 0);
+            gTs = vTs[1];
+            EmitVertex();
+
+            gl_Position = pos1 + vec4(0, -sizeY, 0, 0);
+            gTs = vTs[1];
+            EmitVertex();
+
+            EndPrimitive();
+        }
+
+        void main() {
+            if (vTs[1] <= uTs - uTsRange) return;
+
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // left and right bounds (NDC)
+            float left = pos.x * 2 - 1;
+            float right = (pos.x + size.x) * 2 - 1;
+
+            // main epoch
+            vec4 pos0 = gl_in[0].gl_Position;
+            vec4 pos1 = gl_in[1].gl_Position;
+
+            if (pos1.x >= left) {
+                if (pos0.x < left) pos0.x = left;
+
+                emitRectangle(pos0, pos1, size.y);
+            }
+
+            // ghost epoch
+            pos0 = gl_in[0].gl_Position;
+            pos1 = gl_in[1].gl_Position;
+
+            if (pos0.x < left) {
+                pos0.x += size.x * 2;
+                pos1.x += size.x * 2;
+
+                float posTs = pos.x +
+                    (uTs / uTsRange - int(uTs / uTsRange)) * size.x;
+                posTs = posTs * 2 - 1;
+
+                if (pos0.x < posTs) pos0.x = posTs;
+                if (right < pos1.x) pos1.x = right;
+
+                emitRectangle(pos0, pos1, size.y);
+            }
+        }
         '''
 
     _fragShader = '''
+        in float gTs;
+
         out vec4 FragColor;
 
         uniform vec2  uPos;         // unit
@@ -1133,17 +1226,34 @@ class EpochPlot(Plot, pipeline.Node):
         uniform float uPixelRatio;
         uniform vec4  uFgColor;
 
+        uniform float uTs;
+        uniform float uTsRange;
+        uniform float uFadeRange;   // unit
+
         void main() {
             // high DPI display support
-            vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
+            //vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
 
             // transform to pixel space
             //vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
             //    (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
 
             FragColor = uFgColor;
+
+            float diff = (gTs - uTs) / uTsRange;
+            float fade = 1;
+            if (between(0, diff + 1, uFadeRange))
+                fade = (diff + 1) / uFadeRange;
+            else if (diff < -1)
+                fade = 0;
+            fade = sinFade(fade);
+            FragColor.a *= fade;
         }
         '''
+
+    @property
+    def aux(self):
+        return self._aux
 
     def __init__(self, parent, **kwargs):
         defaults = dict(name='', fgColor=(0,0,1,.6))
@@ -1152,22 +1262,29 @@ class EpochPlot(Plot, pipeline.Node):
 
         super().__init__(parent, **kwargs)
 
+        self._aux = pipeline.Auxillary()
+
     def initializeGL(self):
         self._data = np.array([
-            [.25, .75],
+            [2, 5],
+            [8, 13],
             ], dtype=np.float32)
 
         # properties linked with a uniform variable in the shader
         self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
             margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'))
 
-        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
+        self._prog = Program(vert=self._vertShader,
+            geom=self._geomShader,
+            frag=self._fragShader)
 
         with self._prog:
             for name, value in self._uProps.items():
                 self._prog.setUniform(*value, self._props[name])
             # high DPI display support
             self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
+            self._prog.setUniform('uTsRange', '1f', self.figure.tsRange)
+            self._prog.setUniform('uFadeRange', '1f', self.figure.fadeRange)
 
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
@@ -1189,6 +1306,7 @@ class EpochPlot(Plot, pipeline.Node):
         if not self.visible: return
 
         with self._prog:
+            self._prog.setUniform('uTs', '1f', self.aux.ts)
             glDrawArrays(GL_LINES, 0, self._data.size)
 
         super().paintGL()
@@ -1298,11 +1416,17 @@ class Scope(Figure, pipeline.Sampled):
         '''
 
         # properties with their default values
-        defaults = dict(tsRange=10)
+        defaults = dict(tsRange=10, fadeRange=.4)
 
         self._initProps(defaults, kwargs)
 
         super().__init__(parent, **kwargs)
+
+    def __setattr__(self, name, value):
+        if name in {'tsRange', 'fadeRange'}:
+            raise AttributeError('Cannot set attribute')
+
+        super().__setattr__(name, value)
 
     def initializeGL(self):
         self._tsOffset = 0
@@ -1600,8 +1724,12 @@ class MainWindow(QtWidgets.QWidget):
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 
-        self.generator >> self.filter >> self.grandAvg \
-            >> self.scope >> self.physiologyPlot
+        self.generator >> self.grandAvg >> self.filter >> (
+            self.scope,
+            self.physiologyPlot,
+            self.targetPlot.aux,
+            self.pumpPlot.aux,
+            )
         # self.generator >> self.scope >> self.physiologyPlot
 
         mainLayout = QtWidgets.QHBoxLayout()
