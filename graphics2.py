@@ -1098,8 +1098,6 @@ class EpochPlot(Plot, pipeline.Node):
     _vertShader = '''
         in float aData;
 
-        out float vTs;    // to geom shader
-
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
         uniform vec4  uMargin;      // pixels: l t r b
@@ -1119,9 +1117,9 @@ class EpochPlot(Plot, pipeline.Node):
             pos += uMargin.xw / uCanvasSize;
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
-            vTs = 0 <= aData && aData <= uTs ? aData : uTs;
+            float ts = 0 <= aData && aData <= uTs ? aData : uTs;
 
-            pos.x += (vTs / uTsRange - int(uTs / uTsRange)) * size.x;
+            pos.x += (ts / uTsRange - int(uTs / uTsRange)) * size.x;
             pos.y += size.y / 2;
 
             // apply transformation to vertex and take to NDC space
@@ -1133,9 +1131,7 @@ class EpochPlot(Plot, pipeline.Node):
         layout (lines) in;
         layout (triangle_strip, max_vertices = 8) out;
 
-        in  float vTs[];
-
-        out float gTs;
+        out float gPos;
 
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
@@ -1147,29 +1143,27 @@ class EpochPlot(Plot, pipeline.Node):
         uniform float uTs;
         uniform float uTsRange;
 
-        void emitRectangle(vec4 pos0, vec4 pos1, float sizeY) {
-            gl_Position = pos0 + vec4(0, +sizeY, 0, 0);
-            gTs = vTs[0];
+        void emitRectangle(vec4 pos0, vec4 pos1, vec2 pos, vec2 size) {
+            gl_Position = pos0 + vec4(0, +size.y, 0, 0);
+            gPos = ((pos0.x + 1) / 2 - pos.x) / size.x;
             EmitVertex();
 
-            gl_Position = pos0 + vec4(0, -sizeY, 0, 0);
-            gTs = vTs[0];
+            gl_Position = pos0 + vec4(0, -size.y, 0, 0);
+            gPos = ((pos0.x + 1) / 2 - pos.x) / size.x;
             EmitVertex();
 
-            gl_Position = pos1 + vec4(0, +sizeY, 0, 0);
-            gTs = vTs[1];
+            gl_Position = pos1 + vec4(0, +size.y, 0, 0);
+            gPos = ((pos1.x + 1) / 2 - pos.x) / size.x;
             EmitVertex();
 
-            gl_Position = pos1 + vec4(0, -sizeY, 0, 0);
-            gTs = vTs[1];
+            gl_Position = pos1 + vec4(0, -size.y, 0, 0);
+            gPos = ((pos1.x + 1) / 2 - pos.x) / size.x;
             EmitVertex();
 
             EndPrimitive();
         }
 
         void main() {
-            if (vTs[1] <= uTs - uTsRange) return;
-
             // transform inside parent
             vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
             vec2 size = uSize * uParentSize / uCanvasSize;
@@ -1182,14 +1176,20 @@ class EpochPlot(Plot, pipeline.Node):
             float left = pos.x * 2 - 1;
             float right = (pos.x + size.x) * 2 - 1;
 
+            float posTs = pos.x +
+                (uTs / uTsRange - int(uTs / uTsRange)) * size.x;
+            posTs = posTs * 2 - 1;
+
             // main epoch
             vec4 pos0 = gl_in[0].gl_Position;
             vec4 pos1 = gl_in[1].gl_Position;
 
+            if (pos1.x <= posTs - size.x * 2) return;
+
             if (pos1.x >= left) {
                 if (pos0.x < left) pos0.x = left;
 
-                emitRectangle(pos0, pos1, size.y);
+                emitRectangle(pos0, pos1, pos, size);
             }
 
             // ghost epoch
@@ -1200,20 +1200,16 @@ class EpochPlot(Plot, pipeline.Node):
                 pos0.x += size.x * 2;
                 pos1.x += size.x * 2;
 
-                float posTs = pos.x +
-                    (uTs / uTsRange - int(uTs / uTsRange)) * size.x;
-                posTs = posTs * 2 - 1;
-
                 if (pos0.x < posTs) pos0.x = posTs;
                 if (right < pos1.x) pos1.x = right;
 
-                emitRectangle(pos0, pos1, size.y);
+                emitRectangle(pos0, pos1, pos, size);
             }
         }
         '''
 
     _fragShader = '''
-        in float gTs;
+        in float gPos;
 
         out vec4 FragColor;
 
@@ -1240,12 +1236,12 @@ class EpochPlot(Plot, pipeline.Node):
 
             FragColor = uFgColor;
 
-            float diff = (gTs - uTs) / uTsRange;
+            float diff = gPos - (uTs / uTsRange - int(uTs / uTsRange));
             float fade = 1;
             if (between(0, diff + 1, uFadeRange))
                 fade = (diff + 1) / uFadeRange;
-            else if (diff < -1)
-                fade = 0;
+            else if (between(0, diff, uFadeRange))
+                fade = diff / uFadeRange;
             fade = sinFade(fade);
             FragColor.a *= fade;
         }
@@ -1268,6 +1264,7 @@ class EpochPlot(Plot, pipeline.Node):
         self._data = np.array([
             [2, 5],
             [8, 13],
+            [17, -1],
             ], dtype=np.float32)
 
         # properties linked with a uniform variable in the shader
