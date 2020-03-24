@@ -1259,14 +1259,55 @@ class EpochPlot(Plot, pipeline.Node):
         super().__init__(parent, **kwargs)
 
         self._aux = pipeline.Auxillary()
+        self._cacheSize = 100*2    # cache 100 epochs
+        self._pointer = 0
+        self._partial = None
+        self._data = np.zeros(self._cacheSize, dtype=np.float32)
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+        elif name == 'name':
+            self._label.text = value
+
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
+
+        if not isinstance(data, np.ndarray): data = np.array(data)
+        if data.ndim == 0: data = data[np.newaxis]
+        if data.ndim != 1: raise ValueError('`data` should be 1D')
+
+        return data
+
+    def _written(self, data, source):
+        # when last added epoch has been partial, complete the epoch by adding
+        # its start timestamp to the beginning of current data
+        if self._partial is not None:
+            self._pointer -= 2
+            data = np.insert(data, 0, self._partial)
+            self._partial = None
+
+        # when last epoch in the current data is partial, save its start
+        # timestamp for the next write operation (see above)
+        if len(data) % 2 != 0:
+            self._partial = data[-1]
+            data = np.append(data, -1)
+
+        # write data to (circular) buffer
+        window = np.arange(self._pointer, self._pointer + len(data))
+        window %= self._cacheSize
+        self._data[window] = data
+
+        self._pointer += len(data)
+
+        self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
+
+        super()._written(data, source)
 
     def initializeGL(self):
-        self._data = np.array([
-            [2, 5],
-            [8, 13],
-            [17, -1],
-            ], dtype=np.float32)
-
         # properties linked with a uniform variable in the shader
         self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
             margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'))
@@ -1741,9 +1782,12 @@ class MainWindow(QtWidgets.QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Space:
-            # print('Space pressed')
             if self.generator.paused: self.generator.start()
             else: self.generator.pause()
+        elif event.key() == QtCore.Qt.Key_T:
+            self.targetPlot.write(self.generator.ts)
+        elif event.key() == QtCore.Qt.Key_P:
+            self.pumpPlot.write(self.generator.ts)
 
 
 if __name__ == '__main__':

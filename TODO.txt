@@ -30,3 +30,4 @@ x migrate plotting subsystem to vispy and gloo
 - automatic handling of GL context when initializing or refreshing Item
 + fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
   for as the newest samples
++ fix misc.CircularBuffer overflow when window is not visible and not updated
