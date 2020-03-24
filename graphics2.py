@@ -46,55 +46,34 @@ max3DTextureSize = 1024
 
 
 defaultColors = np.array([
-    [0 , 0 , .3, 1],
-    [0 , 0 , .55, 1],
-    [0 , 0 , .7, 1],
-    [0 , 0 , 1 , 1],
-    [0 , .3, 0 , 1],
-    [0 , .45, 0 , 1],
-    [0 , .6, 0 , 1],
-    [0 , .75, 0 , 1],
-    [0 , .85, 0 , 1],
-    [0 , 1 , 0 , 1],
-    [.3, 0 , 0 , 1],
-    [.6, 0 , 0 , 1],
-    [1 , 0 , 0 , 1],
-    [1 , .4, 0 , 1],
-    [1 , .6, 0 , 1],
-    [1 , .8, 0 , 1],
-    [.9, .9, 0 , 1],
-    [0 , .4, .4, 1],
-    [0 , .6, .6, 1],
-    [0 , .8, .8, 1],
-    [.4, 0 , .4, 1],
-    [.7, 0 , .7, 1],
-    [1 , 0 , 1 , 1],
-    [0 , 0 , 0 , 1],
-    [.2, .2, .2, 1],
-    [.4, .4, .4, 1],
-    [.6, .6, .6, 1],
-    [.8, .8, .8, 1],
-    ], dtype=np.float32)
-
-defaultColors2 = np.array([
-    [0 , 0,  .3, 1],    # 1
-    [0 , 0 , .6, 1],    # 2
-    [0 , 0 , 1 , 1],    # 3
-    [0 , .3, 1 , 1],    # 4
-    [0 , .6, 1 , 1],    # 5
-    [0 , .6, .6, 1],    # 6
-    [0 , .3, 0 , 1],    # 7
-    [0 , .6, 0 , 1],    # 8
-    [0 , 1 , 0 , 1],    # 9
-    [.5, .6, 0 , 1],    # 10
-    [1 , .6, 0 , 1],    # 11
-    [.3, 0 , 0 , 1],    # 12
-    [.6, 0 , 0 , 1],    # 13
-    [1 , 0 , 0 , 1],    # 14
-    [1 , 0 , .3, 1],    # 15
-    [1 , 0 , .6, 1],    # 16
-    [.6, 0 , .6, 1],    # 17
-    [.6, 0 , 1 , 1],    # 18
+    [0 , 0  , .3 , 1],    # 1
+    [0 , 0  , .55, 1],    # 2
+    [0 , 0  , .7 , 1],    # 3
+    [0 , 0  , 1  , 1],    # 4
+    [0 , .3 , 0  , 1],    # 5
+    [0 , .45, 0  , 1],    # 6
+    [0 , .6 , 0  , 1],    # 7
+    [0 , .75, 0  , 1],    # 8
+    [0 , .85, 0  , 1],    # 9
+    [0 , 1  , 0  , 1],    # 10
+    [.3, 0  , 0  , 1],    # 11
+    [.6, 0  , 0  , 1],    # 12
+    [1 , 0  , 0  , 1],    # 13
+    [1 , .4 , 0  , 1],    # 14
+    [1 , .6 , 0  , 1],    # 15
+    [1 , .8 , 0  , 1],    # 16
+    [.9, .9 , 0  , 1],    # 17
+    [0 , .4 , .4 , 1],    # 18
+    [0 , .6 , .6 , 1],    # 19
+    [0 , .8 , .8 , 1],    # 20
+    [.4, 0  , .4 , 1],    # 21
+    [.7, 0  , .7 , 1],    # 22
+    [1 , 0  , 1  , 1],    # 23
+    [0 , 0  , 0  , 1],    # 24
+    [.2, .2 , .2 , 1],    # 25
+    [.4, .4 , .4 , 1],    # 26
+    [.6, .6 , .6 , 1],    # 27
+    [.8, .8 , .8 , 1],    # 28
     ], dtype=np.float32)
 
 
@@ -1057,13 +1036,13 @@ class AnalogPlot(Plot, pipeline.Sampled):
         glViewport(*viewport)
 
     # TODO: find a better name
-    def sub(self, ns1, ns2, data):
+    def _subVBO(self, ns1, ns2, data):
         if ns1 == ns2:
             return
         # wrap around
         if ns1 > ns2:
-            self.sub(ns1, self._nsRange, data[:, :self._nsRange-ns1])
-            self.sub(0, ns2, data[:, self._nsRange-ns1:])
+            self._subVBO(ns1, self._nsRange, data[:, :self._nsRange-ns1])
+            self._subVBO(0, ns2, data[:, self._nsRange-ns1:])
             return
 
         # transfer samples to GPU channel by channel
@@ -1081,7 +1060,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
                 ns1 = self._buffer.nsRead % self._nsRange
                 ns2 = self._buffer.nsWritten % self._nsRange
                 data = self._buffer.read()
-                self.sub(ns1, ns2, data)
+                self._subVBO(ns1, ns2, data)
                 self.refresh(ns1, ns2)
                 self._prog.setUniform('uNs', '1i', self._buffer.nsWritten)
 
@@ -1260,7 +1239,8 @@ class EpochPlot(Plot, pipeline.Node):
 
         self._aux = pipeline.Auxillary()
         self._cacheSize = 100*2    # cache 100 epochs
-        self._pointer = 0
+        self._pointerWrite = 0     # pointer to last element written in _data
+        self._pointerRead = 0      # pointer to last element read from _data
         self._partial = None
         self._data = np.zeros(self._cacheSize, dtype=np.float32)
 
@@ -1284,9 +1264,11 @@ class EpochPlot(Plot, pipeline.Node):
 
     def _written(self, data, source):
         # when last added epoch has been partial, complete the epoch by adding
-        # its start timestamp to the beginning of current data
+        # its start timestamp to the beginning of current data, and also rewind
+        # the read and write pointers
         if self._partial is not None:
-            self._pointer -= 2
+            self._pointerWrite -= 2
+            self._pointerRead = min(self._pointerRead, self._pointerWrite)
             data = np.insert(data, 0, self._partial)
             self._partial = None
 
@@ -1297,13 +1279,11 @@ class EpochPlot(Plot, pipeline.Node):
             data = np.append(data, -1)
 
         # write data to (circular) buffer
-        window = np.arange(self._pointer, self._pointer + len(data))
+        window = np.arange(self._pointerWrite, self._pointerWrite + len(data))
         window %= self._cacheSize
         self._data[window] = data
 
-        self._pointer += len(data)
-
-        self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
+        self._pointerWrite += len(data)
 
         super()._written(data, source)
 
@@ -1340,11 +1320,33 @@ class EpochPlot(Plot, pipeline.Node):
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
+    def _subVBO(self, frm, to, data):
+        '''Update a subregion of VBO'''
+        # nothing to update
+        if frm == to:
+            return
+        # update the full buffer
+        if frm >= to + len(data);
+            self._subVBO(0, len(data), data)
+            return
+        # wrap around
+        if frm > to:
+            self._subVBO(frm, len(data), data)
+            self._subVBO(0, to, data)
+            return
+
+        self._prog.subVBO('aData', frm * sizeFloat, data[frm:to])
+
     def paintGL(self):
         if not self.visible: return
 
         with self._prog:
+            # update subregion of VBO with the newly written epochs
+            self._subVBO(self._pointerRead, self._pointerWrite, self._data)
+            self._pointerRead = self._pointerWrite
+
             self._prog.setUniform('uTs', '1f', self.aux.ts)
+
             glDrawArrays(GL_LINES, 0, self._data.size)
 
         super().paintGL()
