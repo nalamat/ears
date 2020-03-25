@@ -1035,8 +1035,9 @@ class AnalogPlot(Plot, pipeline.Sampled):
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
         glViewport(*viewport)
 
-    # TODO: find a better name
     def _subVBO(self, ns1, ns2, data):
+        '''Update a subregion of VBO'''
+        # nothing to update
         if ns1 == ns2:
             return
         # wrap around
@@ -1243,6 +1244,7 @@ class EpochPlot(Plot, pipeline.Node):
         self._pointerRead = 0      # pointer to last element read from _data
         self._partial = None
         self._data = np.zeros(self._cacheSize, dtype=np.float32)
+        self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
@@ -1263,27 +1265,29 @@ class EpochPlot(Plot, pipeline.Node):
         return data
 
     def _written(self, data, source):
-        # when last added epoch has been partial, complete the epoch by adding
-        # its start timestamp to the beginning of current data, and also rewind
-        # the read and write pointers
-        if self._partial is not None:
-            self._pointerWrite -= 2
-            self._pointerRead = min(self._pointerRead, self._pointerWrite)
-            data = np.insert(data, 0, self._partial)
-            self._partial = None
+        with self._lock:
+            # when last added epoch has been partial, complete the epoch by
+            # adding its start timestamp to the beginning of current data, and
+            # also rewind the read and write pointers
+            if self._partial is not None:
+                self._pointerWrite -= 2
+                self._pointerRead = min(self._pointerRead, self._pointerWrite)
+                data = np.insert(data, 0, self._partial)
+                self._partial = None
 
-        # when last epoch in the current data is partial, save its start
-        # timestamp for the next write operation (see above)
-        if len(data) % 2 != 0:
-            self._partial = data[-1]
-            data = np.append(data, -1)
+            # when last epoch in the current data is partial, save its start
+            # timestamp for the next write operation (see above)
+            if len(data) % 2 != 0:
+                self._partial = data[-1]
+                data = np.append(data, -1)
 
-        # write data to (circular) buffer
-        window = np.arange(self._pointerWrite, self._pointerWrite + len(data))
-        window %= self._cacheSize
-        self._data[window] = data
+            # write data to (circular) buffer
+            window = np.arange(self._pointerWrite,
+                self._pointerWrite + len(data))
+            window %= self._cacheSize
+            self._data[window] = data
 
-        self._pointerWrite += len(data)
+            self._pointerWrite += len(data)
 
         super()._written(data, source)
 
@@ -1325,10 +1329,6 @@ class EpochPlot(Plot, pipeline.Node):
         # nothing to update
         if frm == to:
             return
-        # update the full buffer
-        if frm >= to + len(data);
-            self._subVBO(0, len(data), data)
-            return
         # wrap around
         if frm > to:
             self._subVBO(frm, len(data), data)
@@ -1342,8 +1342,13 @@ class EpochPlot(Plot, pipeline.Node):
 
         with self._prog:
             # update subregion of VBO with the newly written epochs
-            self._subVBO(self._pointerRead, self._pointerWrite, self._data)
-            self._pointerRead = self._pointerWrite
+            with self._lock:
+                if self._pointerWrite - self._pointerRead >= self._cacheSize:
+                    self._subVBO(0, self._cacheSize, self._data)
+                else:
+                    self._subVBO(self._pointerRead % self._cacheSize,
+                        self._pointerWrite % self._cacheSize, self._data)
+                self._pointerRead = self._pointerWrite
 
             self._prog.setUniform('uTs', '1f', self.aux.ts)
 
