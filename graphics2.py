@@ -1249,10 +1249,12 @@ class EpochPlot(Plot, pipeline.Node):
     def __setattr__(self, name, value):
         super().__setattr__(name, value)
 
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
         if name != '_uProps' and hasattr(self, '_uProps') and \
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
-        elif name == 'name':
+        elif name == 'name' and hasattr(self, '_label'):
             self._label.text = value
 
     def _writing(self, data, source):
@@ -1343,16 +1345,213 @@ class EpochPlot(Plot, pipeline.Node):
         with self._prog:
             # update subregion of VBO with the newly written epochs
             with self._lock:
-                if self._pointerWrite - self._pointerRead >= self._cacheSize:
-                    self._subVBO(0, self._cacheSize, self._data)
-                else:
-                    self._subVBO(self._pointerRead % self._cacheSize,
-                        self._pointerWrite % self._cacheSize, self._data)
-                self._pointerRead = self._pointerWrite
+                if self._pointerRead != self._pointerWrite:
+                    if self._pointerWrite-self._pointerRead >= self._cacheSize:
+                        self._subVBO(0, self._cacheSize, self._data)
+                    else:
+                        self._subVBO(self._pointerRead % self._cacheSize,
+                            self._pointerWrite % self._cacheSize, self._data)
+                    self._pointerRead = self._pointerWrite
 
             self._prog.setUniform('uTs', '1f', self.aux.ts)
 
             glDrawArrays(GL_LINES, 0, self._data.size)
+
+        super().paintGL()
+
+
+class SpikePlot(Plot, pipeline.Node):
+    _vertShader = '''
+        in float aData;
+
+        out float vSpikeIndex;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        uniform int   uSpikeCount;
+        uniform int   uSpikeLength;
+        uniform int   uSpikeIndex;
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            vSpikeIndex = gl_VertexID / uSpikeLength;
+            float sampleIndex = gl_VertexID % uSpikeLength;
+            vec2 vertex = vec2(sampleIndex / uSpikeLength, (aData + 1) / 2);
+
+            vertex = (vertex * size + pos) * 2 - vec2(1);
+
+            gl_Position = vec4(vertex, 0, 1);
+        }
+        '''
+
+    _fragShader = '''
+        in float vSpikeIndex;
+
+        out vec4 FragColor;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uPixelRatio;
+
+        uniform int   uSpikeCount;
+        uniform int   uSpikeIndex;
+        uniform vec4  uFgColor;
+
+        void main() {
+            if (0 < fract(vSpikeIndex)) discard;
+            if (uSpikeIndex <= vSpikeIndex) discard;
+
+            // high DPI display support
+            vec2 fragCoord = gl_FragCoord.xy / uPixelRatio;
+
+            // transform to pixel space
+            vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
+                (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
+
+            if (fragCoord.y > rect.y || rect.w > fragCoord.y) discard;
+
+            FragColor = uFgColor;
+            FragColor.a *= 1 - mod(uSpikeIndex - 1 - vSpikeIndex,
+                uSpikeCount) / uSpikeCount;
+        }
+        '''
+
+    def __init__(self, parent, **kwargs):
+        defaults = dict(name='')
+
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
+
+        self._spikeCount = 10
+        self._spikeRead = 0
+        self._pointerWrite = 0
+        self._pointerRead = 0
+        self._lock = threading.Lock()
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+        elif name == 'name' and hasattr(self, '_label'):
+            self._label.text = value
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        if 'spikeLength' not in params:
+            raise ValueError('SpikePlot requires `spikeLength`')
+
+        if 'channels' in params and params['channels'] != 1:
+            raise ValueError('SpikePlot can only plot a single `channel`')
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._spikeLength = params['spikeLength']
+        self._data = np.zeros((self._spikeCount, self._spikeLength),
+            dtype=np.float32)
+
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
+
+        for spike in data:
+            if len(spike) != self._spikeLength:
+                raise ValueError('Spike length discrepancy (%d != %d)' %
+                    (len(spike), self._spikeLength))
+
+        return data
+
+    def _written(self, data, source):
+        with self._lock:
+            for spike in data:
+                self._data[self._pointerWrite % self._spikeCount, :] = spike
+                self._pointerWrite += 1
+
+        super()._written(data, source)
+
+    def initializeGL(self):
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'))
+
+        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
+
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+            # high DPI display support
+            self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
+            self._prog.setUniform('uSpikeLength', '1i', self._spikeLength)
+            self._prog.setUniform('uSpikeCount', '1i', self._spikeCount)
+            self._prog.setUniform('uSpikeIndex', '1i', 0)
+
+            self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
+
+        self._label = Text(self, text=self.name, pos=(0,1), margin=(4,4,0,0),
+            anchor=(0,1), fontSize=14, bold=True, fgColor=self.fgColor)
+
+        super().initializeGL()
+
+    def resizeGL(self):
+        super().resizeGL()
+
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+    def _subVBO(self, frm, to, data):
+        '''Update a subregion of VBO'''
+        # nothing to update
+        if frm == to:
+            return
+        # wrap around
+        if frm > to:
+            self._subVBO(frm, self._spikeCount, data)
+            self._subVBO(0, to, data)
+            return
+
+        self._prog.subVBO('aData', frm * self._spikeLength * sizeFloat,
+            data[frm:to, :])
+
+    def paintGL(self):
+        if not self.visible: return
+
+        with self._prog:
+            # update subregion of VBO with the newly written spikes
+            with self._lock:
+                if self._pointerRead != self._pointerWrite:
+                    if self._pointerWrite-self._pointerRead >= self._spikeCount:
+                        self._subVBO(0, self._spikeCount, self._data)
+                    else:
+                        self._subVBO(self._pointerRead % self._spikeCount,
+                            self._pointerWrite % self._spikeCount, self._data)
+                    self._pointerRead = self._pointerWrite
+                    self._prog.setUniform('uSpikeIndex', '1i',
+                        self._pointerWrite)
+
+            glDrawArrays(GL_LINE_STRIP, 0, self._data.size)
 
         super().paintGL()
 
@@ -1752,16 +1951,32 @@ class MainWindow(QtWidgets.QWidget):
         self.canvas = Canvas(self)
         self.canvas.stats = lambda: '%.1f s' % (self.physiologyPlot.ts)
 
-        self.scope = Scope(self.canvas, margin=(60,20,20,10),
-            tsRange=self.tsRange,
+        self.scope = Scope(self.canvas, pos=(0,0), size=(.7,1),
+            margin=(60,20,20,10), tsRange=self.tsRange,
             xTicks=np.arange(1, self.tsRange)/self.tsRange,
-            yTicks=np.r_[np.arange(0, self.channels)/self.channels * .9 + .1,
+            yTicks=np.r_[np.arange(0, self.channels)/self.channels*.9 + .1,
                 .05])
         self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             name='Target', fgColor=(0,1,0,.6))
         self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
             name='Pump', fgColor=(0,0,1,.6))
+
+        self.spikeCont = Item(self.canvas, pos=(.7,0), size=(.3,1),
+            margin=(0,20,10,10))
+
+        self.spikeFigures = [None]*self.channels
+        self.spikePlots   = [None]*self.channels
+        for i in range(self.channels):
+            self.spikeFigures[i] = Figure(self.spikeCont,
+                pos=(.25*(i%4),.75-.25*(i//4)), size=(.25,.25),
+                margin=(0, 0, 0 if i%4==3 else -2, 0 if i//4==3 else -2),
+                xTicks=[.5], yTicks=[.25,.5,.75])
+            # Text(self.spikeFigures[i], pos=(0,1), anchor=(0,1), text=str(i+1),
+            #     fontSize=14, fgColor=defaultColors[i], bold=True,
+            #     margin=(4,4,0,0))
+            self.spikePlots[i] = SpikePlot(self.spikeFigures[i],
+                name=str(i+1), fgColor=defaultColors[i%len(defaultColors)])
 
         self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
         # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
@@ -1774,6 +1989,7 @@ class MainWindow(QtWidgets.QWidget):
             self.physiologyPlot,
             self.targetPlot.aux,
             self.pumpPlot.aux,
+            SpikeDetector() >> pipeline.Split() >> self.spikePlots
             )
         # self.generator >> self.scope >> self.physiologyPlot
 
