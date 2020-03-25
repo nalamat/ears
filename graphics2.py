@@ -1388,7 +1388,8 @@ class SpikePlot(Plot, pipeline.Node):
 
             vSpikeIndex = gl_VertexID / uSpikeLength;
             float sampleIndex = gl_VertexID % uSpikeLength;
-            vec2 vertex = vec2(sampleIndex / uSpikeLength, (aData + 1) / 2);
+            vec2 vertex = vec2(sampleIndex / (uSpikeLength - 1),
+                (aData + 1) / 2);
 
             vertex = (vertex * size + pos) * 2 - vec2(1);
 
@@ -1439,8 +1440,7 @@ class SpikePlot(Plot, pipeline.Node):
 
         super().__init__(parent, **kwargs)
 
-        self._spikeCount = 10
-        self._spikeRead = 0
+        self._spikeCount = 20
         self._pointerWrite = 0
         self._pointerRead = 0
         self._lock = threading.Lock()
@@ -1562,7 +1562,7 @@ class Figure(Item):
         '''
 
         # properties with their default values
-        defaults = dict(borderWidth=2, zoom=(1,1), pan=(0,0),
+        defaults = dict(borderWidth=1, zoom=(1,1), pan=(0,0),
             xTicks=[], yTicks=[])
 
         self._initProps(defaults, kwargs)
@@ -1796,150 +1796,6 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         if len(self._drawDurations)>180: self._drawDurations.pop(0)
 
 
-class Generator(pipeline.Sampled):
-    @property
-    def paused(self):
-        return not self._continueEvent.isSet()
-
-    def __init__(self, fs, channels, **kwargs):
-        self._ns = 0
-        self._thread = threading.Thread(target=self._loop)
-        self._thread.daemon = True
-        self._continueEvent = threading.Event()
-
-        super().__init__(fs=fs, channels=channels, **kwargs)
-
-    def _addSources(self, sources):
-        raise RuntimeError('Cannot add source for a Generator')
-
-    def _loop(self):
-        start = dt.datetime.now()
-        pauseTS = 0
-
-        while True:
-            time.sleep(.01)
-            if not self._continueEvent.isSet():
-                pause = dt.datetime.now()
-                self._continueEvent.wait()
-                pauseTS += (dt.datetime.now()-pause).total_seconds()
-            ts = (dt.datetime.now()-start).total_seconds()-pauseTS
-            ns = int(ts * self._fs)
-            data = self._gen(self._ns, ns)
-            super().write(data, self)
-            self._ns = ns
-
-    def _gen(self, ns1, ns2):
-        raise NotImplementedError()
-
-    def start(self):
-        self._continueEvent.set()
-        if not self._thread.isAlive():
-            self._thread.start()
-
-    def pause(self):
-        self._continueEvent.clear()
-
-    def write(self, data, source):
-        raise RuntimeError('Cannot write to a Generator')
-
-
-class SineGenerator(Generator):
-    def __init__(self, fs, channels, noisy=True, **kwargs):
-        # randomized channel parameters
-        self._phases = np.random.uniform(0  , np.pi, (channels,1))
-        self._freqs  = np.random.uniform(1  , 5    , (channels,1))
-        self._amps   = np.random.uniform(.05, .5   , (channels,1))
-        self._amps2  = np.random.uniform(.05, .2   , (channels,1))
-        if not noisy:
-            self._amps2 *= 0
-
-        super().__init__(fs=fs, channels=channels, **kwargs)
-
-    def _gen(self, ns1, ns2):
-        # generate data as a (channels, ns) array.
-        return (self._amps * np.sin(2 * np.pi * self._freqs
-            * np.arange(ns1, ns2) / self._fs + self._phases)
-             + self._amps2 * np.random.randn(self._channels, ns2-ns1))
-
-
-class SpikeGenerator(Generator):
-    def _gen(self, ns1, ns2):
-        data = .1*np.random.randn(self._channels, ns2-ns1)
-        dt = (ns2-ns1)/self._fs
-
-        counts = np.random.uniform(0, dt*1000/30, self._channels)
-        counts = np.round(counts).astype(np.int)
-
-        for channel in range(self._channels):
-            for i in range(counts[channel]):
-                # random spike length, amplitude, and location
-                length = int(np.random.uniform(.5e-3, 1e-3)*self._fs)
-                amp    = np.random.uniform(.3, 1)
-                at     = int(np.random.uniform(0, data.shape[1]-length))
-                spike  = -amp*sp.signal.gaussian(length, length/7)
-                data[channel, at:at+length] += spike
-
-        return data
-
-
-class SpikeDetector(pipeline.Sampled):
-    def __init__(self, tl=4, th=20, spikeDuration=2e-3, **kwargs):
-        '''
-        Args:
-            tl (float): Lower detection threshold
-            th (float): Higher detection threshold
-            spikeDuration (float): Spike window duration
-        '''
-        self._tl            = tl
-        self._th            = th
-        self._spikeDuration = spikeDuration
-        self._spikeLength   = None
-        self._buffer        = None
-        self._sd            = None
-
-        super().__init__(**kwargs)
-
-    def _configured(self, params, sinkParams):
-        self._spikeLength         = int(self._spikeDuration*params['fs'])
-        sinkParams['spikeLength'] = self._spikeLength
-
-        super()._configured(params, sinkParams)
-
-        self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
-
-    def _written(self, data, source):
-        self._buffer.write(data)
-
-        nsRead      = self._buffer.nsRead
-        nsAvailable = self._buffer.nsAvailable
-
-        if (nsRead<self._fs*5 and nsAvailable>self._fs
-                or nsRead>self.fs*5 and nsAvailable>self._fs*5):
-            self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
-
-        # do not detect spikes until enough samples are available for
-        # calculating standard deviation of noise
-        if self._sd is None: return
-
-        windowHalf  = self._spikeLength/2
-        windowStart = int(np.floor(windowHalf))
-        windowStop  = int(np.ceil(windowHalf))
-        dataOut     = [None]*self._channels
-
-        # TODO: append last half window samples of previous data to current data
-        for i in range(self._channels):
-            dataOut[i] = []
-
-            peaks, _ = sp.signal.find_peaks(-data[i],
-                height=(self._tl*self._sd, self._th*self._sd),
-                distance=windowHalf)
-            for peak in peaks:
-                if 0 <= peak-windowStart and peak+windowStop < len(data[i]):
-                    dataOut[i] += [data[i,peak-windowStart:peak+windowStop]]
-
-        super()._written(dataOut, source)
-
-
 class MainWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
@@ -1970,17 +1826,13 @@ class MainWindow(QtWidgets.QWidget):
         for i in range(self.channels):
             self.spikeFigures[i] = Figure(self.spikeCont,
                 pos=(.25*(i%4),.75-.25*(i//4)), size=(.25,.25),
-                margin=(0, 0, 0 if i%4==3 else -2, 0 if i//4==3 else -2),
+                margin=(0, 0, 0 if i%4==3 else -1, 0 if i//4==3 else -1),
                 xTicks=[.5], yTicks=[.25,.5,.75])
-            # Text(self.spikeFigures[i], pos=(0,1), anchor=(0,1), text=str(i+1),
-            #     fontSize=14, fgColor=defaultColors[i], bold=True,
-            #     margin=(4,4,0,0))
             self.spikePlots[i] = SpikePlot(self.spikeFigures[i],
                 name=str(i+1), fgColor=defaultColors[i%len(defaultColors)])
 
-        self.generator = SpikeGenerator(fs=self.fs, channels=self.channels)
-        # self.generator = SineGenerator(fs=self.fs, channels=self.channels,
-        #     noisy=True)
+        self.generator = pipeline.SpikeGenerator(fs=self.fs,
+            channels=self.channels)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
 
@@ -1989,8 +1841,11 @@ class MainWindow(QtWidgets.QWidget):
             self.physiologyPlot,
             self.targetPlot.aux,
             self.pumpPlot.aux,
-            SpikeDetector() >> pipeline.Split() >> self.spikePlots
+            pipeline.SpikeDetector() >> pipeline.Split() >> self.spikePlots
             )
+
+        # self.generator = pipeline.SineGenerator(fs=self.fs,
+        #     channels=self.channels, noisy=True)
         # self.generator >> self.scope >> self.physiologyPlot
 
         mainLayout = QtWidgets.QHBoxLayout()
@@ -2001,7 +1856,12 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle('OpenGL Demo')
         self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
-        self.generator.start()
+    def showEvent(self, event):
+        super().showEvent(event)
+
+        if not hasattr(self, '_shown'):
+            self._shown = True
+            self.generator.start()
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Space:
