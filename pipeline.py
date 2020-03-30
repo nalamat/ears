@@ -545,9 +545,11 @@ class LFilter(Sampled):
                 self._zi = self._zi * data[:,0].reshape((self._channels, -1))
 
             # apply the IIR filter
-            data, self._zi = sp.signal.lfilter(*self._ba, data, zi=self._zi)
+            dataOut, self._zi = sp.signal.lfilter(*self._ba, data, zi=self._zi)
+            dataOut[np.isnan(dataOut)] = 0
 
-        super()._written(data, source)
+
+        super()._written(dataOut, source)
 
 
 class Downsample(Sampled):
