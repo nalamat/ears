@@ -1823,10 +1823,12 @@ class MainWindow(QtWidgets.QWidget):
 
         self.spikeFigures = [None]*self.channels
         self.spikePlots   = [None]*self.channels
+        div = np.ceil(np.sqrt(self.channels))
         for i in range(self.channels):
             self.spikeFigures[i] = Figure(self.spikeCont,
-                pos=(.25*(i%4),.75-.25*(i//4)), size=(.25,.25),
-                margin=(0, 0, 0 if i%4==3 else -1, 0 if i//4==3 else -1),
+                pos=(1/div*(i%div),1-1/div*(i//div+1)), size=(1/div,1/div),
+                margin=(0, 0, 0 if i%div==div-1 else -1,
+                    0 if i//div==div-1 else -1),
                 xTicks=[.5], yTicks=[.25,.5,.75])
             self.spikePlots[i] = SpikePlot(self.spikeFigures[i],
                 name=str(i+1), fgColor=defaultColors[i%len(defaultColors)])
@@ -1835,10 +1837,12 @@ class MainWindow(QtWidgets.QWidget):
             channels=self.channels)
         self.filter    = pipeline.LFilter(fl=100, fh=6000)
         self.grandAvg  = pipeline.GrandAverage()
+        self.scale     = 1
+        self.scaler    = pipeline.Func(lambda x: x * self.scale)
 
         self.generator >> self.grandAvg >> self.filter >> (
             self.scope,
-            self.physiologyPlot,
+            self.scaler >> self.physiologyPlot,
             self.targetPlot.aux,
             self.pumpPlot.aux,
             pipeline.SpikeDetector() >> pipeline.Split() >> self.spikePlots
@@ -1871,6 +1875,10 @@ class MainWindow(QtWidgets.QWidget):
             self.targetPlot.write(self.generator.ts)
         elif event.key() == QtCore.Qt.Key_P:
             self.pumpPlot.write(self.generator.ts)
+        elif event.key() == QtCore.Qt.Key_Up:
+            self.scale *= 1.2
+        elif event.key() == QtCore.Qt.Key_Down:
+            self.scale *= 1/1.2
 
 
 if __name__ == '__main__':
