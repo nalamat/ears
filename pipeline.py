@@ -934,8 +934,8 @@ class SpikeDetector(Sampled):
         nsRead      = self._buffer.nsRead
         nsAvailable = self._buffer.nsAvailable
 
-        if (nsRead<self._fs*5 and nsAvailable>self._fs
-                or nsRead>self.fs*5 and nsAvailable>self._fs*5):
+        if (nsRead<self._fs and nsAvailable>self._fs
+                or nsRead>self.fs and nsAvailable>self._fs*2):
             self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
 
         # do not detect spikes until enough samples are available for
