@@ -7,6 +7,7 @@ conda:
 - pytables
 - pyqt (v5)
 - pyqtgraph
+- pyopengl
 
 pip:
-- pydaqmx
+- pydaqmx (not needed with -sim option)
