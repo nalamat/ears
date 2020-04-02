@@ -1556,6 +1556,171 @@ class SpikePlot(Plot, pipeline.Node):
         super().paintGL()
 
 
+class SpikeOverlay(Plot, pipeline.Node):
+    _vertShader = '''
+        in vec2 aVertex;
+
+        out vec2 vVertex;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4( (aVertex * size + pos) * 2 - vec2(1), 0, 1);
+
+            vVertex = aVertex;
+        }
+        '''
+
+    _fragShader = '''
+        out vec4 FragColor;
+
+        uniform vec4 uFgColor;
+        uniform float uMarkerSize;
+
+        vec2 point;
+        float point2;
+        float pxl;
+
+        void main() {
+            // NDC point coordinate (-1 to +1)
+            point = 2 * (gl_PointCoord - .5);
+            point2 = dot(point, point);
+            pxl = 2 / uMarkerSize;
+
+            // full square
+            float a = 1;
+
+            // hollow square
+            //a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
+            //    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
+            //a = clamp(a, 0, 1);
+
+            // +
+            a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
+                step(-pxl/2, point.x) - step(pxl/2, point.x);
+            a = clamp(a, 0, 1);
+
+            // x
+            a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+                smoothstep(0, pxl, abs(point.y) - abs(point.x));
+
+            // full circle
+            // note: there's no performance difference with step vs smoothstep
+            float r0 = 1;
+            float r1 = 1 - 1 * pxl;
+            //a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
+
+            // hollow circle
+            float r2 = 1 - 2 * pxl;
+            //a = smoothstep(r2 * r2, r1 * r1, point2) -
+            //    smoothstep(r1 * r1, r0 * r0, point2);
+
+            // down triangle
+            //a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
+
+            // up triangle
+            //a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
+
+            // left triangle
+            //a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
+
+            // right triangle
+            //a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+
+            FragColor = uFgColor * vec4(1, 1, 1, a);
+        }
+        '''
+
+    def __init__(self, parent, **kwargs):
+        defaults = dict(markerSize=20)
+
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
+
+        self._channels = None
+        self._pointSize = self.markerSize * getPixelRatio()
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name == 'markerSize':
+            self._pointSize = value * getPixelRatio()
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        if 'channels' not in params:
+            raise ValueError('SpikeOverlay requires `channels`')
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._channels = params['channels']
+
+    def initializeGL(self):
+        self._vertices = np.array([
+            [.5, .5],
+            [.25, .25],
+            [.25, .75],
+            [.75, .25],
+            [.75, .75],
+            ], dtype=np.float32)
+
+        # self._vertices = np.random.uniform(0,1,(100000,2)).astype(np.float32)
+
+        self._prog = Program(vert=self._vertShader, frag=self._fragShader)
+
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'), markerSize=('uMarkerSize', '1f'),
+            fgColor=('uFgColor', '4f'))
+
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+
+            self._prog.setVBO('aVertex', GL_FLOAT, 2, self._vertices,
+                GL_STATIC_DRAW)
+
+        super().initializeGL()
+
+    def resizeGL(self):
+        super().resizeGL()
+
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+    def paintGL(self):
+        glPointSize(self._pointSize)
+        with self._prog:
+            glDrawArrays(GL_POINTS, 0, self._vertices.shape[0])
+
+        super().paintGL()
+
+
 class Figure(Item):
     def __init__(self, parent, **kwargs):
         '''
@@ -1802,7 +1967,12 @@ class MainWindow(QtWidgets.QWidget):
 
         self.fs = 31.25e3
         self.tsRange = 10
-        self.channels = 16
+        self.channels = 32
+
+        div = 1
+        while (self.channels / div) % 1 != 0 or self.channels / div > 16:
+            div += 1
+        yTicks = self.channels / div
 
         self.canvas = Canvas(self)
         self.canvas.stats = lambda: '%.1f s' % (self.physiologyPlot.ts)
@@ -1810,28 +1980,29 @@ class MainWindow(QtWidgets.QWidget):
         self.scope = Scope(self.canvas, pos=(0,0), size=(.7,1),
             margin=(60,20,20,10), tsRange=self.tsRange,
             xTicks=np.arange(1, self.tsRange)/self.tsRange,
-            yTicks=np.r_[np.arange(0, self.channels)/self.channels*.9 + .1,
-                .05])
+            yTicks=np.r_[np.arange(0, yTicks)/yTicks*.9 + .1, .05])
         self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             name='Target', fgColor=(0,1,0,.6))
         self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
             name='Pump', fgColor=(0,0,1,.6))
+        self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9),
+            fgColor=(0,0,1,1))
 
         self.spikeCont = Item(self.canvas, pos=(.7,0), size=(.3,1),
             margin=(0,20,10,10))
 
-        self.spikeFigures = [None]*self.channels
-        self.spikePlots   = [None]*self.channels
+        self.spikeFigures = [None] * self.channels
+        self.spikePlots   = [None] * self.channels
         div = np.ceil(np.sqrt(self.channels))
         for i in range(self.channels):
             self.spikeFigures[i] = Figure(self.spikeCont,
-                pos=(1/div*(i%div),1-1/div*(i//div+1)), size=(1/div,1/div),
+                pos=(1/div*(i%div), 1-1/div*(i//div+1)), size=(1/div, 1/div),
                 margin=(0, 0, 0 if i%div==div-1 else -1,
                     0 if i//div==div-1 else -1),
                 xTicks=[.5], yTicks=[.25,.5,.75])
             self.spikePlots[i] = SpikePlot(self.spikeFigures[i],
-                name=str(i+1), fgColor=defaultColors[i%len(defaultColors)])
+                name=str(i+1), fgColor=defaultColors[i % len(defaultColors)])
 
         self.generator = pipeline.SpikeGenerator(fs=self.fs,
             channels=self.channels)
