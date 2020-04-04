@@ -951,12 +951,15 @@ class SpikeDetector(Sampled):
         for i in range(self._channels):
             dataOut[i] = []
 
-            peaks, _ = sp.signal.find_peaks(-data[i],
+            indices, _ = sp.signal.find_peaks(-data[i],
                 height=(self._tl*self._sd, self._th*self._sd),
                 distance=windowHalf)
-            for peak in peaks:
-                if 0 <= peak-windowStart and peak+windowStop < len(data[i]):
-                    dataOut[i] += [data[i,peak-windowStart:peak+windowStop]]
+            for index in indices:
+                if 0 <= index-windowStart and index+windowStop < len(data[i]):
+                    ts = (self.ns + index) / self.fs
+                    peak = data[i, index]
+                    dataOut[i].append((ts, peak,
+                        data[i, index-windowStart:index+windowStop]))
 
         super()._written(dataOut, source)
 

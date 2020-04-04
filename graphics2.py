@@ -1475,7 +1475,7 @@ class SpikePlot(Plot, pipeline.Node):
     def _writing(self, data, source):
         data = super()._writing(data, source)
 
-        for spike in data:
+        for ts, peak, spike in data:
             if len(spike) != self._spikeLength:
                 raise ValueError('Spike length discrepancy (%d != %d)' %
                     (len(spike), self._spikeLength))
@@ -1484,7 +1484,7 @@ class SpikePlot(Plot, pipeline.Node):
 
     def _written(self, data, source):
         with self._lock:
-            for spike in data:
+            for ts, peak, spike in data:
                 self._data[self._pointerWrite % self._spikeCount, :] = spike
                 self._pointerWrite += 1
 
