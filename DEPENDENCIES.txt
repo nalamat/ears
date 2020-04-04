@@ -10,4 +10,4 @@ conda:
 - pyopengl
 
 pip:
-- pydaqmx (not needed with -sim option)
+- pydaqmx (not needed with --sim option)
