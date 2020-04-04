@@ -911,12 +911,18 @@ class SpikeDetector(Sampled):
             th (float): Higher detection threshold
             spikeDuration (float): Spike window duration
         '''
-        self._tl            = tl
-        self._th            = th
-        self._spikeDuration = spikeDuration
-        self._spikeLength   = None
-        self._buffer        = None
-        self._sd            = None
+        self._tl             = tl
+        self._th             = th
+        self._spikeDuration  = spikeDuration
+        self._spikeLength    = None
+        self._sd             = None    # standard deviation of the noise
+        self._buffer         = None    # buffer for calculating SD
+
+        # calculate SD asynchronously
+        self._thread        = threading.Thread(target=self._loop)
+        self._thread.daemon = True
+        self._recalculate   = threading.Event()
+        self._thread.start()
 
         super().__init__(**kwargs)
 
@@ -935,8 +941,8 @@ class SpikeDetector(Sampled):
         nsAvailable = self._buffer.nsAvailable
 
         if (nsRead<self._fs and nsAvailable>self._fs
-                or nsRead>self.fs and nsAvailable>self._fs*2):
-            self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
+                or nsRead>self.fs and nsAvailable>self._fs*5):
+            self._recalculate.set()
 
         # do not detect spikes until enough samples are available for
         # calculating standard deviation of noise
@@ -952,8 +958,9 @@ class SpikeDetector(Sampled):
             dataOut[i] = []
 
             indices, _ = sp.signal.find_peaks(-data[i],
-                height=(self._tl*self._sd, self._th*self._sd),
+                height=(self._tl * self._sd, self._th * self._sd),
                 distance=windowHalf)
+
             for index in indices:
                 if 0 <= index-windowStart and index+windowStop < len(data[i]):
                     ts = (self.ns + index) / self.fs
@@ -962,6 +969,11 @@ class SpikeDetector(Sampled):
                         data[i, index-windowStart:index+windowStop]))
 
         super()._written(dataOut, source)
+
+    def _loop(self):
+        while self._recalculate.wait():
+            self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
+            self._recalculate.clear()
 
 
 if __name__ == '__main__':

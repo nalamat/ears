@@ -31,4 +31,5 @@ x migrate plotting subsystem to vispy and gloo
 + fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
   for as the newest samples
 + fix misc.CircularBuffer overflow when window is not visible and not updated
-- online median calculation for pipeline.SpikeDetector
++ online median calculation for pipeline.SpikeDetector
+  (fixed with asynchronous calculation)
