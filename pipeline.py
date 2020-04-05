@@ -940,8 +940,9 @@ class SpikeDetector(Sampled):
         nsRead      = self._buffer.nsRead
         nsAvailable = self._buffer.nsAvailable
 
-        if (nsRead<self._fs and nsAvailable>self._fs
-                or nsRead>self.fs and nsAvailable>self._fs*5):
+        if (nsRead < self.fs*.1 and nsAvailable > self.fs*.1
+                or nsRead < self.fs and nsAvailable > self.fs
+                or nsRead > self.fs and nsAvailable > self.fs*5):
             self._recalculate.set()
 
         # do not detect spikes until enough samples are available for
@@ -963,7 +964,7 @@ class SpikeDetector(Sampled):
 
             for index in indices:
                 if 0 <= index-windowStart and index+windowStop < len(data[i]):
-                    ts = (self.ns + index) / self.fs
+                    ts = (self.ns - data.shape[1] + index) / self.fs
                     peak = data[i, index]
                     dataOut[i].append((ts, peak,
                         data[i, index-windowStart:index+windowStop]))
