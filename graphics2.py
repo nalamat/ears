@@ -526,6 +526,237 @@ class Text(Item):
         super().paintGL()
 
 
+class TextArray(Item):
+    '''Graphical text array item.'''
+
+    _vertShader = '''
+        in  vec2 aPos;     // of text instance in unit space
+        in  vec2 aSize;    // of text instance in pixels
+
+        out vec2 vPos;     // same as aPos
+        out vec2 vSize;    // same as aSize
+        out int  vIndex;   // gl_VertexID
+
+        uniform vec2  uPos;         // of text array in parent's unit space
+        uniform vec2  uSize;        // of text array in parent's unit space
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4( (aPos * size + pos) * 2 - vec2(1), 0, 1);
+
+            vPos    = aPos;
+            vSize   = aSize;
+            vIndex  = gl_VertexID;
+        }
+        '''
+
+    _geomShader = '''
+        layout (points) in;
+        layout (triangle_strip, max_vertices = 4) out;
+
+        in  vec2 vPos[];      // of text instance in unit space
+        in  vec2 vSize[];     // of text instance in pixels
+        in  int  vIndex[];    // gl_VertexID
+
+        out vec2  gTexCoord;  // unit texture space
+        out vec2  gSize;      // of text instance in pixels
+        out float gIndex;     // gl_VertexID
+
+        uniform vec2 uCanvasSize;  // pixels
+        uniform vec2 uAnchor;      // unit
+
+        void main() {
+            vec2 size = vSize[0] / uCanvasSize * 2; // pixels to NDC space
+            vec2 pos = gl_in[0].gl_Position.xy;
+            vec2 pos0 = pos - uAnchor * size;
+            vec2 pos1 = pos + (1 - uAnchor) * size;
+
+            gSize = vSize[0];
+            gIndex = vIndex[0];
+
+            gl_Position = vec4(pos0.xy, 0, 1);
+            gTexCoord = vec2(0, 1);
+            EmitVertex();
+
+            gl_Position = vec4(pos0.x, pos1.y, 0, 1);
+            gTexCoord = vec2(0, 0);
+            EmitVertex();
+
+            gl_Position = vec4(pos1.x, pos0.y, 0, 1);
+            gTexCoord = vec2(1, 1);
+            EmitVertex();
+
+            gl_Position = vec4(pos1.x, pos1.y, 0, 1);
+            gTexCoord = vec2(1, 0);
+            EmitVertex();
+        }
+        '''
+
+    _fragShader = '''
+        in vec2  gTexCoord;
+        in vec2  gSize;
+        in float gIndex;
+
+        out vec4 FragColor;
+
+        uniform sampler3D uTexture;
+        uniform vec3      uTexSize;
+        uniform float     uPixelRatio;
+
+        void main() {
+            vec3 texCoord = vec3(gTexCoord * gSize * uPixelRatio / uTexSize.zy,
+                (gIndex + .5) / uTexSize.x);
+            FragColor = texture(uTexture, texCoord);
+            //FragColor = vec4(0, 0, 1, .5);
+        }
+        '''
+
+    def __init__(self, parent, **kwargs):
+        '''
+        Args:
+            pos (2 floats): In unit parent space.
+            size (2 floats): In unit parent space.
+            margin (4 ints): In pixels (l, t, r, b).
+            text (str)
+            anchor (2 floats): In unit text space.
+            fontSize (float)
+            bold (bool)
+            italic (bool)
+            align (QtCore.Qt.Alignment): Possible values are AlignLeft,
+                AlignRight, AlignCenter, AlignJustify.
+            fgColor (4 floats): RGBA 0-1.
+            bgColor (4 floats): RGBA 0-1.
+            visible (bool)
+        '''
+
+        # properties with their default values
+        defaults = dict(text=[], arrayPos=[], anchor=(.5,.5),
+            fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
+            bgColor=(1,1,1,0), fgColor=(0,0,0,1))
+
+        self._initProps(defaults, kwargs)
+
+        super().__init__(parent, **kwargs)
+
+        self._props['arrayPos'] = np.array(self.arrayPos, dtype=np.float32)
+        self._arraySize = np.ones(self.arrayPos.shape, dtype=np.float32) * 10
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+
+        if not hasattr(self, '_initialized') or not self._initialized: return
+
+        if name != '_uProps' and hasattr(self, '_uProps') and \
+                name in self._uProps:
+            self._prog.setUniform(*self._uProps[name], value)
+
+        if name in {'text', 'fontSize', 'bold', 'italic',
+                'align', 'bgColor', 'fgColor'}:
+            self.refresh()
+
+    def initializeGL(self):
+        self._tex = glGenTextures(1)
+
+        self._prog = Program(vert=self._vertShader, geom=self._geomShader,
+            frag=self._fragShader)
+
+        # properties linked with a uniform variable in the shader
+        self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
+            margin=('uMargin', '4f'), anchor=('uAnchor', '2f'))
+
+        with self._prog:
+            for name, value in self._uProps.items():
+                self._prog.setUniform(*value, self._props[name])
+            self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
+            self._prog.setVBO('aPos', GL_FLOAT, 2, self.arrayPos,
+                GL_DYNAMIC_DRAW)
+
+        self.refresh()
+
+        super().initializeGL()
+
+    def resizeGL(self):
+        super().resizeGL()
+
+        with self._prog:
+            self._prog.setUniform('uParentPos', '2f', self.parent.posPxl)
+            self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
+            self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
+
+    def refresh(self):
+        '''Generates texture for the given text, font, color, etc.
+        Note: This function does not force redrawing of the text on screen.
+        '''
+        ratio = getPixelRatio()
+        font = QtGui.QFont('arial', self.fontSize * ratio,
+            QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal, self.italic)
+
+        self._arraySize = np.zeros(self.arrayPos.shape)
+
+        for i, text in enumerate(self.text):
+            self._arraySize[i] = Text.getSize(text, font)
+        self._arraySize = self._arraySize.clip(1)
+
+        w = int(self._arraySize[:, 0].max())
+        h = int(self._arraySize[:, 1].max())
+        texData = np.zeros((len(self.text), h, w, 4), dtype=np.float32)
+
+        for i, text in enumerate(self.text):
+            w, h = self._arraySize[i].astype(np.int)
+            image = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32)
+            image.fill(QtGui.QColor(*np.array(self.bgColor)*255))
+
+            painter = QtGui.QPainter()
+            painter.begin(image)
+            painter.setPen(QtGui.QColor(*np.array(self.fgColor)*255))
+            painter.setFont(font)
+            painter.drawText(0, 0, w, h, self.align, text)
+            painter.end()
+            str = image.bits().asstring(w * h * 4)
+            texData[i, :h, :w, :] = np.frombuffer(str,
+                dtype=np.uint8).reshape((h, w, 4))
+
+        self._arraySize = self._arraySize / ratio
+
+        with self._prog:
+            self._prog.setUniform('uTexSize', '3f', texData.shape)
+            self._prog.setVBO('aSize', GL_FLOAT, 2,
+                self._arraySize.astype(np.float32), GL_DYNAMIC_DRAW)
+
+        # texture
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_3D, self._tex)
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA, texData.shape[2],
+            texData.shape[1], texData.shape[0], 0, GL_BGRA, GL_UNSIGNED_BYTE,
+            texData)
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        # glGenerateMipmap(GL_TEXTURE_2D)
+
+    def paintGL(self):
+        if not self.visible: return
+
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_3D, self._tex)
+
+        with self._prog:
+            glDrawArrays(GL_POINTS, 0, self.arrayPos.shape[0])
+
+        super().paintGL()
+
+
 class Rectangle(Item):
     '''Graphical rectangle with border and fill.'''
 
@@ -1800,16 +2031,17 @@ class Figure(Item):
 
         super().__init__(parent, **kwargs)
 
-        # view holds all plots
-        self._props['view'] = Item(parent=self, pos=(0,0), size=(1,1),
-            margin=(self.borderWidth,)*4)
-
-        self._grid = Grid(parent=self.view,
+        self._grid = Grid(self, pos=(0,0), size=(1,1),
+            margin=(self.borderWidth,)*4,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
             xTicks=self.xTicks, yTicks=self.yTicks)
 
+        # view holds all plots
+        self._props['view'] = Item(self, pos=(0,0), size=(1,1),
+            margin=(self.borderWidth,)*4)
+
         # a border around the figure
-        self._border = Rectangle(parent=self, pos=(0,0), size=(1,1),
+        self._border = Rectangle(self, pos=(0,0), size=(1,1),
             borderWidth=self.borderWidth, bgColor=self.bgColor,
             fgColor=self.fgColor)
 
@@ -1912,7 +2144,15 @@ class Scope(Figure, pipeline.Sampled):
                 self.tsRange/self._tickCount)):
             self._ticks[i] = Text(parent=self.view,
                 pos=(ts/self.tsRange, 1), anchor=(.5,0), margin=(0,0,0,5),
-                fontSize=10, fgColor=self.fgColor, bold=True)
+                fontSize=10, fgColor=self.fgColor, bold=True, visible=False)
+
+        ticks = np.arange(0, self.tsRange*1.01, self.tsRange/self._tickCount)
+        labels = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
+        tickPos = np.c_[np.arange(0, self._tickCount+1) / self._tickCount,
+            np.zeros(self._tickCount+1)]
+        self._ticks2 = TextArray(self, pos=(0,1), size=(1,0),
+            margin=(0,0,0,5), text=labels, arrayPos=tickPos, anchor=(.5,0),
+            fontSize=10, fgColor=self.fgColor, bold=True, visible=True)
 
         self.refresh()
 
@@ -1923,6 +2163,11 @@ class Scope(Figure, pipeline.Sampled):
                 self.tsRange/self._tickCount)):
             ts2 = ts + self._tsOffset
             self._ticks[i].text = '%02d:%02d' % (ts2 // 60, ts2 % 60)
+
+        ticks = np.arange(0, self.tsRange*1.01, self.tsRange/self._tickCount)
+        ticks += self._tsOffset
+        labels = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
+        self._ticks2.text = labels
 
     def paintGL(self):
         tsOffset = (self.ts // self.tsRange) * self.tsRange
