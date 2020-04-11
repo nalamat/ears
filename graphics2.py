@@ -540,6 +540,7 @@ class TextArray(Item):
         uniform vec2  uPos;         // of text array in parent's unit space
         uniform vec2  uSize;        // of text array in parent's unit space
         uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uOffset;      // pixels
         uniform vec2  uParentPos;   // pixels
         uniform vec2  uParentSize;  // pixels
         uniform vec2  uCanvasSize;  // pixels
@@ -549,8 +550,8 @@ class TextArray(Item):
             vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
             vec2 size = uSize * uParentSize / uCanvasSize;
 
-            // add margin
-            pos += uMargin.xw / uCanvasSize;
+            // add margin and offset
+            pos += (uMargin.xw + uOffset) / uCanvasSize;
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
             // apply transformation to vertex and take to NDC space
@@ -631,6 +632,7 @@ class TextArray(Item):
             texts (n strs): Texts to be drawn.
             poss (nx2 floats): Position of texts in unit TextArray space.
             anchor (2 floats): In unit text instance space.
+            offset (2 floats): In pixels.
             fontSize (float)
             bold (bool)
             italic (bool)
@@ -642,7 +644,7 @@ class TextArray(Item):
         '''
 
         # properties with their default values
-        defaults = dict(texts=[], poss=[], anchor=(.5,.5),
+        defaults = dict(texts=[], poss=[], anchor=(.5,.5), offset=(0,0),
             fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
             bgColor=(1,1,1,0), fgColor=(0,0,0,1))
 
@@ -681,7 +683,8 @@ class TextArray(Item):
 
         # properties linked with a uniform variable in the shader
         self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
-            margin=('uMargin', '4f'), anchor=('uAnchor', '2f'))
+            margin=('uMargin', '4f'), anchor=('uAnchor', '2f'),
+            offset=('uOffset', '2f'))
 
         with self._prog:
             for name, value in self._uProps.items():
@@ -704,15 +707,23 @@ class TextArray(Item):
         '''Generates texture for the given text, font, color, etc.
         Note: This function does not force redrawing of the text on screen.
         '''
+        if not self.texts: return
+
+        # generate a Qt font object for each text instance
         ratio = getPixelRatio()
-        font = QtGui.QFont('arial', self.fontSize * ratio,
-            QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal, self.italic)
+        fontSizes = np.array(self.fontSize, ndmin=1) * ratio
+        if fontSizes.shape[0] < len(self.texts):
+            pad = len(self.texts) - fontSizes.shape[0]
+            fontSizes = np.pad(fontSizes, (0,pad), 'edge')
+        bold = QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal
+        fonts = [QtGui.QFont('arial', fontSize, bold, self.italic)
+            for fontSize in fontSizes]
 
         # calcualte size of each text instance in pixels
         sizes = np.zeros((len(self.texts), 2), dtype=np.float32)
 
         for i, text in enumerate(self.texts):
-            sizes[i] = Text.getSize(text, font)
+            sizes[i] = Text.getSize(text, fonts[i])
         sizes = sizes.clip(1)    # size of 0 not allowed
 
         # w and h of the 3D texture has be max of all text sizes
@@ -720,10 +731,10 @@ class TextArray(Item):
         h = int(sizes[:, 1].max())
         texData = np.zeros((len(self.texts), h, w, 4), dtype=np.float32)
 
-        fgColor = np.array(self.fgColor, ndmin=2)
-        if fgColor.shape[0] < len(self.texts):
-            pad = len(self.texts) - fgColor.shape[0]
-            fgColor = np.pad(fgColor, ((0,pad),(0,0)), 'edge')
+        fgColors = np.array(self.fgColor, ndmin=2)
+        if fgColors.shape[0] < len(self.texts):
+            pad = len(self.texts) - fgColors.shape[0]
+            fgColors = np.pad(fgColors, ((0,pad),(0,0)), 'edge')
 
         # draw text elements
         for i, text in enumerate(self.texts):
@@ -733,8 +744,8 @@ class TextArray(Item):
 
             painter = QtGui.QPainter()
             painter.begin(image)
-            painter.setPen(QtGui.QColor(*fgColor[i]*255))
-            painter.setFont(font)
+            painter.setPen(QtGui.QColor(*fgColors[i]*255))
+            painter.setFont(fonts[i])
             painter.drawText(0, 0, w, h, self.align, text)
             painter.end()
             str = image.bits().asstring(w * h * 4)
@@ -1211,12 +1222,10 @@ class AnalogPlot(Plot, pipeline.Sampled):
             self._prog2.setVBO('aVertex', GL_FLOAT, 1, self._buffer._data,
                 GL_DYNAMIC_DRAW)
 
-        self._labels = [None] * self.channels
         for channel in range(self.channels):
-            self._labels[channel] = Text(parent=self, text=str(channel+1),
-                pos=(0, 1-(channel+.5)/self.channels), anchor=(1,.5),
-                margin=(0,0,5+self.margin[0],0), fontSize=18, bold=True,
-                fgColor=defaultColors[channel % len(defaultColors)])
+            self.figure.addYLabel(str(channel+1),
+                (1 - (channel+.5)/self.channels) * self.size[1] + self.pos[1],
+                defaultColors[channel % len(defaultColors)], 18)
 
         self.refresh()
 
@@ -1558,9 +1567,8 @@ class EpochPlot(Plot, pipeline.Node):
 
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
-        self._label = Text(self, text=self.name, pos=(0,.5), anchor=(1,.5),
-                margin=(0,0,5+self.margin[0],0), fontSize=14, bold=True,
-                fgColor=self.fgColor)
+        self.figure.addYLabel(self.name, self.pos[1] + self.size[1] * .5,
+            self.fgColor, 14)
 
         super().initializeGL()
 
@@ -2060,13 +2068,10 @@ class Figure(Item):
             fgColor=self.fgColor)
 
     def __setattr__(self, name, value):
-        if name in {'view'}:
+        if name in {'view', 'xTicks', 'yTicks'}:
             raise AttributeError('Cannot set attribute')
 
         super().__setattr__(name, value)
-
-        if name in {'xTicks', 'yTicks'}:
-            setattr(self._grid, name, value)
 
     def _pxl2nrmView(self, pxlDelta):
         # translate a delta (dx, dy) from pixels to normalized in view space
@@ -2143,27 +2148,50 @@ class Scope(Figure, pipeline.Sampled):
 
         super().__init__(parent, **kwargs)
 
+        self._labelOffset = 4
+        self._labelFontSize = 10
+
     def __setattr__(self, name, value):
         if name in {'tsRange', 'fadeRange'}:
             raise AttributeError('Cannot set attribute')
 
         super().__setattr__(name, value)
 
+    def addYLabel(self, text, yPos, fgColor=None, fontSize=None):
+        if fgColor is None: fgColor = self.fgColor
+        if fontSize is None: fontSize = self._labelFontSize
+
+        pos = np.array([[0, yPos]])
+        fgColor = np.array(fgColor, ndmin=2)
+
+        self._yLabels.texts += [text]
+        self._yLabels.fontSize += [fontSize]
+        self._yLabels.poss = np.r_[self._yLabels.poss, pos]
+        self._yLabels.fgColor = np.r_[self._yLabels.fgColor, fgColor]
+
     def initializeGL(self):
         self._tsOffset = 0
 
+        labelOffset = 4
+
         poss = np.c_[self.xTicks, np.zeros(len(self.xTicks))]
-        self._xTickLabels = TextArray(self, pos=(0,1), size=(1,0),
-            margin=(self.borderWidth,0,self.borderWidth,5),
-            texts=[], poss=poss, anchor=(.5,0), fontSize=10,
-            fgColor=self.fgColor, bold=True)
+        self._xLabels = TextArray(self, pos=(0,1), size=(1,0),
+            margin=(self.borderWidth,0,self.borderWidth,0),
+            texts=[], poss=poss, anchor=(.5,0), offset=(0,labelOffset),
+            fontSize=self._labelFontSize, fgColor=self.fgColor, bold=True)
+
+        self._yLabels = TextArray(self, pos=(0,0), size=(0,1),
+            margin=(0,self.borderWidth,0,self.borderWidth),
+            texts=[], poss=np.zeros((0,2)), anchor=(1,.5),
+            offset=(-labelOffset,0),
+            fontSize=[], fgColor=np.zeros((0,4)), bold=True)
 
         self.refresh()
 
         super().initializeGL()
 
     def refresh(self):
-        self._xTickLabels.texts = ['%02d:%02d' % (ts // 60, ts % 60)
+        self._xLabels.texts = ['%02d:%02d' % (ts // 60, ts % 60)
             for ts in self.xTicks * self.tsRange + self._tsOffset]
 
     def paintGL(self):
