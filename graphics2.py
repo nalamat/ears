@@ -1834,8 +1834,8 @@ class SpikeOverlay(Plot, pipeline.Node):
                 ((aVertex.y + 1) / 2 + uChannels - 1 - channel) / uChannels);
 
             // clip if vertex has the default value (x == -1) or is passed
-            float zClip = float(aVertex.x < 0 ||
-                aVertex.x <= uTs - uTsRange) * 2;
+            float zClip = float(aVertex.x < 0 || aVertex.x <= uTs - uTsRange ||
+                vertex.y < 0 || 1 < vertex.y) * 2;
 
             // apply transformation to vertex and take to NDC space
             gl_Position = vec4( (vertex * size + pos) * 2 - vec2(1), zClip, 1);
@@ -2313,19 +2313,24 @@ class MainWindow(QtWidgets.QWidget):
 
         self.generator = pipeline.SpikeGenerator(fs=self.fs,
             channels=self.channels)
-        self.filter    = pipeline.LFilter(fl=100, fh=6000)
-        self.grandAvg  = pipeline.GrandAverage()
-        self.scale     = 1
-        self.scaler    = pipeline.Func(lambda x: x * self.scale)
+        self.filter     = pipeline.LFilter(fl=100, fh=6000)
+        self.grandAvg   = pipeline.GrandAverage()
+        self.scaleStep  = 0
+        self.scaleRatio = 1.2
+        self.scaler1    = pipeline.Func(lambda data:
+            data * self.scaleRatio ** self.scaleStep)
+        self.scaler2    = pipeline.Func(lambda data:
+            [[(ts, peak * self.scaleRatio ** self.scaleStep, spike)
+                for (ts, peak, spike) in channelData] for channelData in data])
 
         self.generator >> self.grandAvg >> self.filter >> (
             self.scope,
-            self.scaler >> self.physiologyPlot,
+            self.scaler1 >> self.physiologyPlot,
             pipeline.SpikeDetector() >> (
-                self.spikeOverlay,
+                self.scaler2 >> self.spikeOverlay,
                 pipeline.Split() >> self.spikePlots
-                )
             )
+        )
 
         # self.generator = pipeline.SineGenerator(fs=self.fs,
         #     channels=self.channels, noisy=True)
@@ -2355,9 +2360,9 @@ class MainWindow(QtWidgets.QWidget):
         elif event.key() == QtCore.Qt.Key_P:
             self.pumpPlot.write(self.generator.ts)
         elif event.key() == QtCore.Qt.Key_Up:
-            self.scale *= 1.2
+            self.scaleStep += 1
         elif event.key() == QtCore.Qt.Key_Down:
-            self.scale *= 1/1.2
+            self.scaleStep -= 1
 
 
 if __name__ == '__main__':
