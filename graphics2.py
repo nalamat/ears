@@ -571,9 +571,10 @@ class TextArray(Item):
         in  vec2 vSize[];     // of text instance in pixels
         in  int  vIndex[];    // gl_VertexID
 
-        out vec2  gTexCoord;  // unit texture space
+        out vec2  gPos;       // of text instance in unit space
         out vec2  gSize;      // of text instance in pixels
         out float gIndex;     // gl_VertexID
+        out vec2  gTexCoord;  // unit texture space
 
         uniform vec2 uCanvasSize;  // pixels
         uniform vec2 uAnchor;      // unit
@@ -584,7 +585,8 @@ class TextArray(Item):
             vec2 pos0 = pos - uAnchor * size;
             vec2 pos1 = pos + (1 - uAnchor) * size;
 
-            gSize = vSize[0];
+            gPos   = vPos[0];
+            gSize  = vSize[0];
             gIndex = vIndex[0];
 
             gl_Position = vec4(pos0.xy, 0, 1);
@@ -606,9 +608,10 @@ class TextArray(Item):
         '''
 
     _fragShader = '''
-        in vec2  gTexCoord;
+        in vec2  gPos;
         in vec2  gSize;
         in float gIndex;
+        in vec2  gTexCoord;
 
         out vec4 FragColor;
 
@@ -2137,6 +2140,58 @@ class Figure(Item):
 
 
 class Scope(Figure, pipeline.Sampled):
+    class XLabels(TextArray):
+        _fragShader = '''
+            in vec2  gPos;
+            in vec2  gSize;
+            in float gIndex;
+            in vec2  gTexCoord;
+
+            out vec4 FragColor;
+
+            uniform sampler3D uTexture;
+            uniform vec3      uTexSize;
+            uniform float     uPixelRatio;
+
+            uniform float     uTs;
+            uniform float     uTsRange;
+            uniform float     uFadeRange;
+
+            void main() {
+                vec3 texCoord = vec3(
+                    gTexCoord * gSize * uPixelRatio / uTexSize.zy,
+                    (gIndex + .5) / uTexSize.x);
+                FragColor = texture(uTexture, texCoord);
+
+                // apply oscilloscope cyclic fading effect
+                float diff = gPos.x - mod(uTs, uTsRange) / uTsRange;
+                float fade = 1;
+                if (0 < diff && uTs < uTsRange)
+                    fade = 0;
+                else if (between(0, diff, uFadeRange))
+                    fade = diff / uFadeRange;
+                fade = sinFade(fade);
+                FragColor.a *= fade;
+            }
+            '''
+
+        def initializeGL(self):
+            super().initializeGL()
+
+            self._lastTs = 0
+
+            with self._prog:
+                self._prog.setUniform('uTsRange', '1f', self.parent.tsRange)
+                self._prog.setUniform('uFadeRange', '1f', self.parent.fadeRange)
+
+        def paintGL(self):
+            if self._lastTs != self.parent.ts:
+                self._prog.setUniform('uTs', '1f', self.parent.ts)
+                self._lastTs = self.parent.ts
+
+            super().paintGL()
+
+
     def __init__(self, parent, **kwargs):
         '''
         '''
@@ -2175,7 +2230,7 @@ class Scope(Figure, pipeline.Sampled):
         labelOffset = 4
 
         poss = np.c_[self.xTicks, np.zeros(len(self.xTicks))]
-        self._xLabels = TextArray(self, pos=(0,1), size=(1,0),
+        self._xLabels = Scope.XLabels(self, pos=(0,1), size=(1,0),
             margin=(self.borderWidth,0,self.borderWidth,0),
             texts=[], poss=poss, anchor=(.5,0), offset=(0,labelOffset),
             fontSize=self._labelFontSize, fgColor=self.fgColor, bold=True)
