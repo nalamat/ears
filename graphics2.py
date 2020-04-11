@@ -619,7 +619,6 @@ class TextArray(Item):
             vec3 texCoord = vec3(gTexCoord * gSize * uPixelRatio / uTexSize.zy,
                 (gIndex + .5) / uTexSize.x);
             FragColor = texture(uTexture, texCoord);
-            //FragColor = vec4(0, 0, 1, .5);
         }
         '''
 
@@ -629,20 +628,21 @@ class TextArray(Item):
             pos (2 floats): In unit parent space.
             size (2 floats): In unit parent space.
             margin (4 ints): In pixels (l, t, r, b).
-            text (str)
-            anchor (2 floats): In unit text space.
+            texts (n strs): Texts to be drawn.
+            poss (nx2 floats): Position of texts in unit TextArray space.
+            anchor (2 floats): In unit text instance space.
             fontSize (float)
             bold (bool)
             italic (bool)
             align (QtCore.Qt.Alignment): Possible values are AlignLeft,
                 AlignRight, AlignCenter, AlignJustify.
-            fgColor (4 floats): RGBA 0-1.
+            fgColor (nx4 floats): RGBA 0-1.
             bgColor (4 floats): RGBA 0-1.
             visible (bool)
         '''
 
         # properties with their default values
-        defaults = dict(text=[], arrayPos=[], anchor=(.5,.5),
+        defaults = dict(texts=[], poss=[], anchor=(.5,.5),
             fontSize=12, bold=False, italic=False, align=QtCore.Qt.AlignCenter,
             bgColor=(1,1,1,0), fgColor=(0,0,0,1))
 
@@ -650,10 +650,17 @@ class TextArray(Item):
 
         super().__init__(parent, **kwargs)
 
-        self._props['arrayPos'] = np.array(self.arrayPos, dtype=np.float32)
-        self._arraySize = np.ones(self.arrayPos.shape, dtype=np.float32) * 10
+        self.poss = self.poss
 
     def __setattr__(self, name, value):
+        if name == 'texts' and isinstance(value, str):
+            value = [value]
+
+        if name == 'poss':
+            value = np.array(value, dtype=np.float32)
+            if value.ndim != 2 or value.shape[1] != 2:
+                raise ValueError('`poss` must be an n by 2 array')
+
         super().__setattr__(name, value)
 
         if not hasattr(self, '_initialized') or not self._initialized: return
@@ -662,7 +669,7 @@ class TextArray(Item):
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
 
-        if name in {'text', 'fontSize', 'bold', 'italic',
+        if name in {'texts', 'poss', 'fontSize', 'bold', 'italic',
                 'align', 'bgColor', 'fgColor'}:
             self.refresh()
 
@@ -680,8 +687,6 @@ class TextArray(Item):
             for name, value in self._uProps.items():
                 self._prog.setUniform(*value, self._props[name])
             self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
-            self._prog.setVBO('aPos', GL_FLOAT, 2, self.arrayPos,
-                GL_DYNAMIC_DRAW)
 
         self.refresh()
 
@@ -703,24 +708,32 @@ class TextArray(Item):
         font = QtGui.QFont('arial', self.fontSize * ratio,
             QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal, self.italic)
 
-        self._arraySize = np.zeros(self.arrayPos.shape)
+        # calcualte size of each text instance in pixels
+        sizes = np.zeros((len(self.texts), 2), dtype=np.float32)
 
-        for i, text in enumerate(self.text):
-            self._arraySize[i] = Text.getSize(text, font)
-        self._arraySize = self._arraySize.clip(1)
+        for i, text in enumerate(self.texts):
+            sizes[i] = Text.getSize(text, font)
+        sizes = sizes.clip(1)    # size of 0 not allowed
 
-        w = int(self._arraySize[:, 0].max())
-        h = int(self._arraySize[:, 1].max())
-        texData = np.zeros((len(self.text), h, w, 4), dtype=np.float32)
+        # w and h of the 3D texture has be max of all text sizes
+        w = int(sizes[:, 0].max())
+        h = int(sizes[:, 1].max())
+        texData = np.zeros((len(self.texts), h, w, 4), dtype=np.float32)
 
-        for i, text in enumerate(self.text):
-            w, h = self._arraySize[i].astype(np.int)
+        fgColor = np.array(self.fgColor, ndmin=2)
+        if fgColor.shape[0] < len(self.texts):
+            pad = len(self.texts) - fgColor.shape[0]
+            fgColor = np.pad(fgColor, ((0,pad),(0,0)), 'edge')
+
+        # draw text elements
+        for i, text in enumerate(self.texts):
+            w, h = sizes[i].astype(np.int)
             image = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32)
             image.fill(QtGui.QColor(*np.array(self.bgColor)*255))
 
             painter = QtGui.QPainter()
             painter.begin(image)
-            painter.setPen(QtGui.QColor(*np.array(self.fgColor)*255))
+            painter.setPen(QtGui.QColor(*fgColor[i]*255))
             painter.setFont(font)
             painter.drawText(0, 0, w, h, self.align, text)
             painter.end()
@@ -728,12 +741,19 @@ class TextArray(Item):
             texData[i, :h, :w, :] = np.frombuffer(str,
                 dtype=np.uint8).reshape((h, w, 4))
 
-        self._arraySize = self._arraySize / ratio
+        # normalize text sizes by device pixel ratio (Qt compatible)
+        sizes = sizes / ratio
+
+        # ensure `poss` is at least the same length as `texts`
+        poss = np.array(self.poss, np.float32)
+        if poss.shape[0] < len(self.texts):
+            pad = len(self.texts) - poss.shape[0]
+            poss = np.pad(poss, ((0,pad), (0,0)), 'constant', constant_values=0)
 
         with self._prog:
             self._prog.setUniform('uTexSize', '3f', texData.shape)
-            self._prog.setVBO('aSize', GL_FLOAT, 2,
-                self._arraySize.astype(np.float32), GL_DYNAMIC_DRAW)
+            self._prog.setVBO('aPos', GL_FLOAT, 2, poss, GL_DYNAMIC_DRAW)
+            self._prog.setVBO('aSize', GL_FLOAT, 2, sizes, GL_DYNAMIC_DRAW)
 
         # texture
         glActiveTexture(GL_TEXTURE0)
@@ -743,7 +763,6 @@ class TextArray(Item):
             texData)
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        # glGenerateMipmap(GL_TEXTURE_2D)
 
     def paintGL(self):
         if not self.visible: return
@@ -752,7 +771,7 @@ class TextArray(Item):
         glBindTexture(GL_TEXTURE_3D, self._tex)
 
         with self._prog:
-            glDrawArrays(GL_POINTS, 0, self.arrayPos.shape[0])
+            glDrawArrays(GL_POINTS, 0, len(self.texts))
 
         super().paintGL()
 
@@ -2137,37 +2156,21 @@ class Scope(Figure, pipeline.Sampled):
 
     def initializeGL(self):
         self._tsOffset = 0
-        self._tickCount = 10
+        self._tickCount = 11
 
-        self._ticks = [None]*(self._tickCount+1)
-        for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
-                self.tsRange/self._tickCount)):
-            self._ticks[i] = Text(parent=self.view,
-                pos=(ts/self.tsRange, 1), anchor=(.5,0), margin=(0,0,0,5),
-                fontSize=10, fgColor=self.fgColor, bold=True, visible=False)
-
-        ticks = np.arange(0, self.tsRange*1.01, self.tsRange/self._tickCount)
-        labels = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
-        tickPos = np.c_[np.arange(0, self._tickCount+1) / self._tickCount,
-            np.zeros(self._tickCount+1)]
-        self._ticks2 = TextArray(self, pos=(0,1), size=(1,0),
-            margin=(0,0,0,5), text=labels, arrayPos=tickPos, anchor=(.5,0),
-            fontSize=10, fgColor=self.fgColor, bold=True, visible=True)
+        poss = np.c_[np.linspace(0, 1, self._tickCount),
+            np.zeros(self._tickCount)]
+        self._ticks = TextArray(self, pos=(0,1), size=(1,0), margin=(0,0,0,5),
+            texts=[], poss=poss, anchor=(.5,0), fontSize=10,
+            fgColor=self.fgColor, bold=True, visible=True)
 
         self.refresh()
 
         super().initializeGL()
 
     def refresh(self):
-        for i, ts in enumerate(np.arange(0, self.tsRange*1.01,
-                self.tsRange/self._tickCount)):
-            ts2 = ts + self._tsOffset
-            self._ticks[i].text = '%02d:%02d' % (ts2 // 60, ts2 % 60)
-
-        ticks = np.arange(0, self.tsRange*1.01, self.tsRange/self._tickCount)
-        ticks += self._tsOffset
-        labels = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
-        self._ticks2.text = labels
+        ticks = np.linspace(0, self.tsRange, self._tickCount) + self._tsOffset
+        self._ticks.texts = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
 
     def paintGL(self):
         tsOffset = (self.ts // self.tsRange) * self.tsRange
