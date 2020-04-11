@@ -1478,10 +1478,6 @@ class EpochPlot(Plot, pipeline.Node):
         }
         '''
 
-    @property
-    def aux(self):
-        return self._aux
-
     def __init__(self, parent, **kwargs):
         defaults = dict(name='', fgColor=(0,0,1,.6))
 
@@ -1489,7 +1485,6 @@ class EpochPlot(Plot, pipeline.Node):
 
         super().__init__(parent, **kwargs)
 
-        self._aux = pipeline.Auxillary()
         self._cacheSize = 100*2    # cache 100 epochs
         self._pointerWrite = 0     # pointer to last element written in _data
         self._pointerRead = 0      # pointer to last element read from _data
@@ -1604,7 +1599,7 @@ class EpochPlot(Plot, pipeline.Node):
                             self._pointerWrite % self._cacheSize, self._data)
                     self._pointerRead = self._pointerWrite
 
-            self._prog.setUniform('uTs', '1f', self.aux.ts)
+            self._prog.setUniform('uTs', '1f', self.figure.ts)
 
             glDrawArrays(GL_LINES, 0, self._data.size)
 
@@ -2051,7 +2046,7 @@ class Figure(Item):
         super().__init__(parent, **kwargs)
 
         self._grid = Grid(self, pos=(0,0), size=(1,1),
-            margin=(self.borderWidth,)*4,
+            margin=(max(self.borderWidth-1,0),)*4,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
             xTicks=self.xTicks, yTicks=self.yTicks)
 
@@ -2156,21 +2151,20 @@ class Scope(Figure, pipeline.Sampled):
 
     def initializeGL(self):
         self._tsOffset = 0
-        self._tickCount = 11
 
-        poss = np.c_[np.linspace(0, 1, self._tickCount),
-            np.zeros(self._tickCount)]
-        self._ticks = TextArray(self, pos=(0,1), size=(1,0), margin=(0,0,0,5),
+        poss = np.c_[self.xTicks, np.zeros(len(self.xTicks))]
+        self._xTickLabels = TextArray(self, pos=(0,1), size=(1,0),
+            margin=(self.borderWidth,0,self.borderWidth,5),
             texts=[], poss=poss, anchor=(.5,0), fontSize=10,
-            fgColor=self.fgColor, bold=True, visible=True)
+            fgColor=self.fgColor, bold=True)
 
         self.refresh()
 
         super().initializeGL()
 
     def refresh(self):
-        ticks = np.linspace(0, self.tsRange, self._tickCount) + self._tsOffset
-        self._ticks.texts = ['%02d:%02d' % (ts // 60, ts % 60) for ts in ticks]
+        self._xTickLabels.texts = ['%02d:%02d' % (ts // 60, ts % 60)
+            for ts in self.xTicks * self.tsRange + self._tsOffset]
 
     def paintGL(self):
         tsOffset = (self.ts // self.tsRange) * self.tsRange
@@ -2286,15 +2280,15 @@ class MainWindow(QtWidgets.QWidget):
         div = 1
         while (self.channels / div) % 1 != 0 or self.channels / div > 16:
             div += 1
-        yTicks = self.channels / div
+        yTickCount = int(self.channels / div + 1)
 
         self.canvas = Canvas(self)
         self.canvas.stats = lambda: '%.1f s' % (self.physiologyPlot.ts)
 
         self.scope = Scope(self.canvas, pos=(0,0), size=(.7,1),
             margin=(60,20,20,10), tsRange=self.tsRange,
-            xTicks=np.arange(1, self.tsRange)/self.tsRange,
-            yTicks=np.r_[np.arange(0, yTicks)/yTicks*.9 + .1, .05])
+            xTicks=np.linspace(0, 1, self.tsRange+1),
+            yTicks=np.r_[np.linspace(.1, 1, yTickCount), .05])
         self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
         self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
@@ -2327,8 +2321,6 @@ class MainWindow(QtWidgets.QWidget):
         self.generator >> self.grandAvg >> self.filter >> (
             self.scope,
             self.scaler >> self.physiologyPlot,
-            self.targetPlot.aux,
-            self.pumpPlot.aux,
             pipeline.SpikeDetector() >> (
                 self.spikeOverlay,
                 pipeline.Split() >> self.spikePlots
