@@ -53,6 +53,13 @@ session.
 
 ![Physiology Window](media/screenshot-2.png?raw=true)
 
+For viewing a demo of GPU accelerated plotting using OpenGL and online
+spike detection, try:
+
+    $ python graphics.py
+
+![Physiology Window](media/screenshot-3.png?raw=true)
+
 
 ## Resources
 
