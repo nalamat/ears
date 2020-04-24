@@ -1501,7 +1501,7 @@ class EpochPlot(Plot, pipeline.Node):
         '''
 
     def __init__(self, parent, **kwargs):
-        defaults = dict(name='', fgColor=(0,0,1,.6))
+        defaults = dict(label='', fgColor=(0,0,1,.6))
 
         self._initProps(defaults, kwargs)
 
@@ -1515,6 +1515,9 @@ class EpochPlot(Plot, pipeline.Node):
         self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
+        if name in {'label'}:
+            raise AttributeError('Cannot set attribute')
+
         super().__setattr__(name, value)
 
         if not hasattr(self, '_initialized') or not self._initialized: return
@@ -1522,8 +1525,6 @@ class EpochPlot(Plot, pipeline.Node):
         if name != '_uProps' and hasattr(self, '_uProps') and \
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
-        elif name == 'name' and hasattr(self, '_label'):
-            self._label.text = value
 
     def _writing(self, data, source):
         data = super()._writing(data, source)
@@ -1580,7 +1581,7 @@ class EpochPlot(Plot, pipeline.Node):
 
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
-        self.figure.addYLabel(self.name, self.pos[1] + self.size[1] * .5,
+        self.figure.addYLabel(self.label, self.pos[1] + self.size[1] * .5,
             self.fgColor, 14)
 
         super().initializeGL()
@@ -1701,7 +1702,7 @@ class SpikePlot(Plot, pipeline.Node):
         '''
 
     def __init__(self, parent, **kwargs):
-        defaults = dict(name='')
+        defaults = dict(label='')
 
         self._initProps(defaults, kwargs)
 
@@ -1713,6 +1714,9 @@ class SpikePlot(Plot, pipeline.Node):
         self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
+        if name in {'label'}:
+            raise AttributeError('Cannot set attribute')
+
         super().__setattr__(name, value)
 
         if not hasattr(self, '_initialized') or not self._initialized: return
@@ -1720,8 +1724,6 @@ class SpikePlot(Plot, pipeline.Node):
         if name != '_uProps' and hasattr(self, '_uProps') and \
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
-        elif name == 'name' and hasattr(self, '_label'):
-            self._label.text = value
 
     def _configuring(self, params, sinkParams):
         super()._configuring(params, sinkParams)
@@ -1775,7 +1777,7 @@ class SpikePlot(Plot, pipeline.Node):
 
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
-        self._label = Text(self, text=self.name, pos=(0,1), margin=(4,4,0,0),
+        self._label = Text(self, text=self.label, pos=(0,1), margin=(4,4,0,0),
             anchor=(0,1), fontSize=14, bold=True, fgColor=self.fgColor)
 
         super().initializeGL()
@@ -2385,9 +2387,9 @@ class MainWindow(QtWidgets.QWidget):
         self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
         self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
-            name='Target', fgColor=(0,1,0,.6))
+            label='Target', fgColor=(0,1,0,.6))
         self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
-            name='Pump', fgColor=(0,0,1,.6))
+            label='Pump', fgColor=(0,0,1,.6))
 
         self.spikeCont = Item(self.canvas, pos=(.7,0), size=(.3,1),
             margin=(0,20,10,10))
@@ -2402,7 +2404,7 @@ class MainWindow(QtWidgets.QWidget):
                     0 if i//div==div-1 else -1),
                 xTicks=[.5], yTicks=[.25,.5,.75])
             self.spikePlots[i] = SpikePlot(self.spikeFigures[i],
-                name=str(i+1), fgColor=defaultColors[i % len(defaultColors)])
+                label=str(i+1), fgColor=defaultColors[i % len(defaultColors)])
 
         self.generator = pipeline.SpikeGenerator(fs=self.fs,
             channels=self.channels)
