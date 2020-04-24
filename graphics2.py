@@ -765,7 +765,7 @@ class TextArray(Item):
             poss = np.pad(poss, ((0,pad), (0,0)), 'constant', constant_values=0)
 
         with self._prog:
-            self._prog.setUniform('uTexSize', '3f', texData.shape)
+            self._prog.setUniform('uTexSize', '3f', texData.shape[:-1])
             self._prog.setVBO('aPos', GL_FLOAT, 2, poss, GL_DYNAMIC_DRAW)
             self._prog.setVBO('aSize', GL_FLOAT, 2, sizes, GL_DYNAMIC_DRAW)
 
@@ -941,6 +941,7 @@ class Grid(Rectangle):
         uniform float uXTicks[{MAX_TICKS}]; // unit
         uniform int   uYTickCount;
         uniform float uYTicks[{MAX_TICKS}]; // unit
+        uniform int   uDash;    // 1: solid, >1: dashed
 
         void main() {
             // high DPI display support
@@ -950,17 +951,18 @@ class Grid(Rectangle):
             vec4 rect = vec4(uPos * uParentSize + uParentPos + uMargin.xw,
                 (uPos + uSize) * uParentSize + uParentPos - uMargin.zy).xwzy;
 
-            // check border
+            // check vertical grid lines
             for (int i=0; i<uXTickCount; ++i)
                 if (int(fragCoord.x) == int(uXTicks[i]*(rect.z-rect.x)+rect.x)
-                        && int(fragCoord.y)%3 == 0) {
+                        && int(fragCoord.y)%uDash == 0) {
                     FragColor = uFgColor;
                     return;
                 }
 
+            // check horizontal grid lines
             for (int i=0; i<uYTickCount; ++i)
                 if (int(fragCoord.y) == int(uYTicks[i]*(rect.y-rect.w)+rect.w)
-                        && int(fragCoord.x)%3 == 0) {
+                        && int(fragCoord.x)%uDash == 0) {
                     FragColor = uFgColor;
                     return;
                 }
@@ -972,17 +974,22 @@ class Grid(Rectangle):
 
     def __init__(self, parent, **kwargs):
         # properties with their default values
-        defaults = dict(xTicks=[], yTicks=[])
+        defaults = dict(xTicks=[], yTicks=[], dash=3)
 
         self._initProps(defaults, kwargs)
 
         super().__init__(parent, **kwargs)
+
+        self.xTicks = self.xTicks
+        self.yTicks = self.yTicks
 
     def __setattr__(self, name, value):
         # verify value
         if name in {'xTicks', 'yTicks'}:
             if len(value) > Grid.MAX_TICKS:
                 raise ValueError('Tick count cannot exceed %d' % Grid.MAX_TICKS)
+            # ignore tick values that are at or exceeding the bounds
+            value = [v for v in value if 0 < v and v < 1]
 
         # set attribute
         super().__setattr__(name, value)
@@ -1005,10 +1012,13 @@ class Grid(Rectangle):
     def initializeGL(self):
         super().initializeGL()
 
+        self._uProps['dash'] = ('uDash', '1i')
+
         # set uniforms
         with self._prog:
             self.xTicks = self.xTicks
             self.yTicks = self.yTicks
+            self.dash = self.dash
 
 
 class Plot(Item):
