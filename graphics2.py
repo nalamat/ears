@@ -306,12 +306,14 @@ class Item:
             if hasattr(item, func):
                 getattr(item, func)(*args, **kwargs)
 
-    # initally called from Canvas.initializeGL
+
+    # functions below are chained to all child items
+    # they are initially called from Canvas
+
     def initializeGL(self):
         self._initialized = True
         self.callItems('initializeGL')
 
-    # initally called from Canvas.resizeGL
     def resizeGL(self):
         parent = self.parent
         margin = np.array(self.margin)
@@ -323,12 +325,7 @@ class Item:
 
         self.callItems('resizeGL')
 
-    # initally called from Canvas.paintGL
-    def paintGL(self):
-        self.callItems('paintGL')
-
-    # functions chained to all child items
-    _funcs = []
+    _funcs = ['paintGL', 'wheelEvent']
     for func in _funcs:
         exec('def %(func)s(self, *args, **kwargs):\n'
             '    self.callItems("%(func)s", *args, **kwargs)' % {'func':func})
@@ -2068,8 +2065,11 @@ class Figure(Item):
 
         super().__init__(parent, **kwargs)
 
+        self.zoom = self.zoom
+        self.pan = self.pan
+
         self._grid = Grid(self, pos=(0,0), size=(1,1),
-            margin=(max(self.borderWidth-1,0),)*4,
+            margin=(self.borderWidth,)*4,
             fgColor=self.fgColor*np.array([1,1,1,.2]),
             xTicks=self.xTicks, yTicks=self.yTicks)
 
@@ -2086,6 +2086,9 @@ class Figure(Item):
         if name in {'view', 'xTicks', 'yTicks'}:
             raise AttributeError('Cannot set attribute')
 
+        if name in {'zoom', 'pan'}:
+            value = np.array(value)
+
         super().__setattr__(name, value)
 
     def _pxl2nrmView(self, pxlDelta):
@@ -2093,27 +2096,28 @@ class Figure(Item):
         # mainly used for panning
         return pxlDelta * 2 / self._pxlViewSize * [1, -1]
 
-    def on_mouse_wheel(self, event):
-        if not self.isInside(event.pos): return
+    def wheelEvent(self, event):
+        pos = np.array([event.x(), event.y()])
+        if not self.isInside(pos): return
 
-        scale = event.delta[0] if event.delta[0] else event.delta[1]
-        scale = math.exp(scale * .15)
-        if 'Control' in event.modifiers:    # both x and y zoom
-            scale = np.array([scale, scale])
-        elif 'Shift' in event.modifiers:
-            scale = np.array([scale, 1])    # only x zoom
-        elif 'Alt' in event.modifiers:
-            scale = np.array([1, scale])    # only y zoom
-        else:
-            return                          # no zoom
+        scale = event.pixelDelta().y()
+        scale = 1.005 ** scale
+        # if 'Control' in event.modifiers:    # both x and y zoom
+        #     scale = np.array([scale, scale])
+        # elif 'Shift' in event.modifiers:
+        #     scale = np.array([scale, 1])    # only x zoom
+        # elif 'Alt' in event.modifiers:
+        #     scale = np.array([1, scale])    # only y zoom
+        # else:
+        #     return                          # no zoom
 
         zoom = self.zoom
         self.zoom = zoom * scale
-        scale = self.zoom / zoom
-        delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
-        self.pan = delta * (1 - scale) + self.pan * scale
+        # scale = self.zoom / zoom
+        # delta = self._pxl2nrmView(event.pos - self._pxlViewCenter)
+        # self.pan = delta * (1 - scale) + self.pan * scale
 
-        super().on_mouse_wheel(self, event)
+        super().wheelEvent(self, event)
 
     def on_mouse_press(self, event):
         if not self.isInside(event.pos): return
@@ -2148,7 +2152,7 @@ class Figure(Item):
 
     def isInside(self, posPxl):
         return ((self.posPxl < posPxl) &
-            (pxl < self.posPxl + self.sizePxl)).all()
+            (posPxl < self.posPxl + self.sizePxl)).all()
 
 
 class Scope(Figure, pipeline.Sampled):
@@ -2242,7 +2246,7 @@ class Scope(Figure, pipeline.Sampled):
         labelOffset = 4
 
         poss = np.c_[self.xTicks, np.zeros(len(self.xTicks))]
-        self._xLabels = Scope.XLabels(self, pos=(0,1), size=(1,0),
+        self._xLabels = TextArray(self, pos=(0,1), size=(1,0),
             margin=(self.borderWidth,0,self.borderWidth,0),
             texts=[], poss=poss, anchor=(.5,0), offset=(0,labelOffset),
             fontSize=self._labelFontSize, fgColor=self.fgColor, bold=True)
