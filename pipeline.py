@@ -990,10 +990,10 @@ if __name__ == '__main__':
     pr     = Print()
     buffer = CircularBuffer(10)
 
-    head | thread | split | (mult2,  plus1 | plus2 | filt) | pr
-    # head | split | DummySink(2)
-    # head | thread | avg | pr | buffer
-    # head | split | (mult2, plus1) | pr
+    head >> thread >> split >> (mult2,  plus1 >> plus2 >> filt) >> pr
+    # head >> split >> DummySink(2)
+    # head >> thread >> avg >> pr >> buffer
+    # head >> split >> (mult2, plus1) >> pr
 
     # avg.mask = (True, True, False)
 
@@ -1009,7 +1009,7 @@ if __name__ == '__main__':
     # filt.fh = 9
     # head.write(np.array([10,10,10,10,10,10,9,8,7,6,5,4]))
 
-    # (func1, func2) | pr
+    # (func1, func2) >> pr
     #
     # func1.write(np.array([1,2,3,4,5,6,7,8,9,4]))
     # func2.write(np.array([1,2,3,4,5,6,7,8,9,4]))
