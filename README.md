@@ -35,7 +35,7 @@ Here's a video of the software in action:
 ## How to use
 
 Make sure all the packages listed in DEPENDENCIES.txt are installed.
-The main entry point of the software is load.py:
+The main entry point of the software is [`load.py`](load.py):
 
     $ python load.py
 
@@ -61,15 +61,64 @@ spike detection, try:
 ![Physiology Window](media/screenshot-3.png?raw=true)
 
 
+## Online stream processing
+
+The [`pipeline`](pipeline.py) module provides a generic, easy to use, and extendable object-oriented framework for online processing of data streams in Python, which is particularly suited for handling multi-channel electrophysiology signals in the EARS software.
+
+Inspired by the `dplyr` package in R, `pipeline` allows definition of stream processing stages as `Node`s that can be connected to each other using `>>`, the shift operator. Alternatively, `|` or the shell pipe operator can be used.
+
+```python
+daqs.physiologyInput \
+    >> pipeline.LFilter(fl=300, fh=6e3, n=6) \
+    >> self.physiologyPlot
+```
+
+Here, a key difference with `dplyr` is that `>>` only declares the connections in the pipeline, but no actual processing of data occurs at this statement. All `Node`s inherit the `write()` method that when called, passes new data into the node for processing. The processed data will further be passed to the connected nodes downstream.
+
+Normally data is processed synchronously in the pipeline, meaning the execution of the code goes on halt until all downstream nodes are done with their tasks. Although, a `Thread` node can be inserted into the pipeline to allow asynchronous processing of the data. This could prove useful in situations that the data acquisition thread must not be blocked for too long or when implementing an interactive GUI. Note that in the current implementation of `Thread`, due to limitations of Python's GIL, multithreaded code does not actually run in parallel, but asynchronously. If necessary, the `wait()` method can be called on the root node to block execution until an asynchronous pipeline is done processing.
+
+```python
+daqs.physiologyInput \
+    >> pipeline.Thread() \
+    >> pipeline.LFilter(fl=300, fh=6e3, n=6) \
+    >> pipeline.GrandAverage() \
+    >> pipeline.DownsampleMinMax(ds=32) \
+    >> self.physiologyPlot
+```
+
+Other than linear pipelines, it is possible to connect nodes to multiple branches. This is done by applying `>>` between a node and an iterator of nodes. If the left hand side of `>>` has a single node, its output data will be passed to each of the nodes in the iterator in the order of appearance. In the following example, the same signal is filtered at different frequency bands and then passed on to different plots.
+
+```python
+daqs.physiologyInput \
+    >> pipeline.Thread() \
+    >> (pipeline.LFilter(fl=None, fh=300 , n=6) >> self.physiologyPlotLow,
+        pipeline.LFilter(fl=300 , fh=6e3 , n=6) >> self.physiologyPlotMid,
+        pipeline.LFilter(fl=6e3 , fh=None, n=6) >> self.physiologyPlotHigh)
+```
+
+Visualizations of pipeline structures are coming soon!
+
+If instead of passing the same data to all downstream nodes, a splitting behavior is required, use the `Split` node between the source and the list of nodes. The code below passes spikes detected from each channel of the recorded signal to separate plots:
+
+```python
+daqs.physiologyInput \
+    >> pipeline.Thread() \
+    >> pipeline.LFilter(fl=300 , fh=6e3 , n=6) \
+    >> pipeline.SpikeDetector() \
+    >> pipeline.Split() \
+    >> (self.spikePlot1, self.spikePlot2, self.spikePlot3)
+```
+
+
 ## Resources
 
 Inspired by and partially rewritten from NeuroBehavior by Brad Buran:
-https://bitbucket.org/bburan/neurobehavior
+<https://bitbucket.org/bburan/neurobehavior>
 
 Electronic circuits:
-- Infrared sensor control: https://github.com/bburan/circuit-IR-sensor
-- Low dropout power supply: https://github.com/nalamat/supply-ldo-adj-single
-- Switching power supply: https://github.com/nalamat/supply-isr-adj-single
+- Infrared sensor control: <https://github.com/bburan/circuit-IR-sensor>
+- Low dropout power supply: <https://github.com/nalamat/supply-ldo-adj-single>
+- Switching power supply: <https://github.com/nalamat/supply-isr-adj-single>
 
 
 ## License
@@ -89,16 +138,16 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 ## Web and contact
 
 Visit the EARS page at GitHub:
-https://github.com/nalamat/ears
+<https://github.com/nalamat/ears>
 
 Ask questions, report bugs and give suggestions here:
-https://github.com/nalamat/ears/issues
+<https://github.com/nalamat/ears/issues>
 
 Visit lab website:
-https://centers.njit.edu/nesh
+<https://centers.njit.edu/nesh>
 
 Feel free to email us about anything at:
-- NESH Lab: ears.software@gmail.com
+- NESH Lab: <ears.software@gmail.com>
 
 Written by:
-- Nima Alamatsaz: nima.alamatsaz@gmail.com
+- Nima Alamatsaz: <nima.alamatsaz@gmail.com>
