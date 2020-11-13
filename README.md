@@ -34,8 +34,8 @@ Here's a video of the software in action:
 
 ## How to use
 
-Make sure all the packages listed in DEPENDENCIES.txt are installed.
-The main entry point of the software is [`load.py`](load.py):
+Make sure all the packages listed in [DEPENDENCIES.txt](DEPENDENCIES.txt) are installed.
+The main entry point of the software is [load.py](load.py):
 
     $ python load.py
 
@@ -53,19 +53,12 @@ session.
 
 ![Physiology Window](media/screenshot-2.png?raw=true)
 
-For viewing a demo of GPU accelerated plotting using OpenGL and online
-spike detection, try:
-
-    $ python graphics.py
-
-![Physiology Window](media/screenshot-3.png?raw=true)
-
 
 ## Online stream processing
 
 The [`pipeline`](pipeline.py) module provides a generic, easy to use, and extendable object-oriented framework for online processing of data streams in Python, which is particularly suited for handling multi-channel electrophysiology signals in the EARS software.
 
-Inspired by the `dplyr` package in R, `pipeline` allows definition of stream processing stages as `Node`s that can be connected to each other using `>>`, the shift operator. Alternatively, `|` or the shell pipe operator can be used.
+Inspired by the `dplyr` package in R, [`pipeline`](pipeline.py) allows definition of stream processing stages as `Node`s that can be connected to each other using `>>`, the shift operator. Alternatively, `|` or the shell pipe operator can be used.
 
 ```python
 daqs.physiologyInput \
@@ -108,6 +101,17 @@ daqs.physiologyInput \
     >> pipeline.Split() \
     >> (self.spikePlot1, self.spikePlot2, self.spikePlot3)
 ```
+
+
+## GPU accelerated plotting
+
+Currently in development.
+
+For a demo of GPU accelerated plotting using OpenGL and online spike detection, try:
+
+    $ python graphics.py
+
+![Physiology Window](media/screenshot-3.png?raw=true)
 
 
 ## Resources
