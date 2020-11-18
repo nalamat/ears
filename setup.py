@@ -56,6 +56,7 @@ class SetupWindow(QtWidgets.QDialog):
         self.experimentMode = QtWidgets.QComboBox()
         self.experimentMode.addItems(gb.session.experimentMode.values)
         self.experimentMode.setCurrentText(gb.session.experimentMode.value)
+        self.experimentMode.currentTextChanged.connect(self.updateDataFile)
 
         self.recording = QtWidgets.QComboBox()
         self.recording.addItems(gb.session.recording.values)
@@ -73,7 +74,6 @@ class SetupWindow(QtWidgets.QDialog):
         self.dataFile = QtWidgets.QLineEdit()
         # self.dataFile.setFixedWidth(self.dataFile.sizeHint().width()*2.5)
         if gb.session.autoDataFile.value:
-            self.updateDataFile()
             self.dataFile.setReadOnly(True)
         else:
             self.dataFile.setText(gb.session.dataFile.value)
@@ -151,6 +151,9 @@ class SetupWindow(QtWidgets.QDialog):
         buttonsLayout.addWidget(btnCancel)
         buttonsLayout.addWidget(btnCalibration)
         buttonsLayout.addStretch()
+
+        if gb.session.autoDataFile.value:
+            self.updateDataFile()
 
         layout = QtWidgets.QGridLayout()
         layout.addWidget(QtWidgets.QLabel('Data directory:'),
@@ -336,6 +339,7 @@ class SetupWindow(QtWidgets.QDialog):
     def paradigmFileChanged(self, text, *args):
         if text:
             self.rove.setEnabled(False)
+            self.updateDataFile()
         else:
             self.rove.setEnabled(True)
 
@@ -432,14 +436,25 @@ class SetupWindow(QtWidgets.QDialog):
     @gui.showExceptions
     def updateDataFile(self, *args):
         if self.autoDataFile.checkState() == QtCore.Qt.Checked:
+            if self.recording.currentText() == 'Physiology':
+                experimentMode = self.experimentMode.currentText()
+                if experimentMode != 'Passive': experimentMode = 'Active'
+                paradigmFile = self.paradigmFile.currentText()
+                paradigmFile, _ = os.path.splitext(paradigmFile)
+                physiologyText = '-%s-%s' % (experimentMode, paradigmFile)
+            else:
+                physiologyText = ''
+
             dataFile = os.path.join(
                 # self.dataDir.text(),
                 self.subjectID.currentText(),
-                '%s-%s-%s-%s.h5' % (
+                '%s-%s-%s-%s%s.h5' % (
                     self.subjectID.currentText(),
                     gb.sessionTimeCompact,
                     self.experimentName.currentText(),
-                    self.recording.currentText() )
+                    self.recording.currentText(),
+                    physiologyText)
                 ).replace('\\','/')
+
             self.dataFile.setText(dataFile)
             self.dataFile.setCursorPosition(0)
