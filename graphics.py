@@ -1101,7 +1101,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
     _vertShader2 = '''
         in float aVertex;
 
-        out float fChannel;
+        out float vChannel;
 
         uniform int   uNsRange;
         uniform int   uChannels;
@@ -1114,19 +1114,19 @@ class AnalogPlot(Plot, pipeline.Sampled):
             vertex = vertex * 2 - vec2(1);
 
             gl_Position = vec4(vertex, 0, 1);
-            fChannel = channel;
+            vChannel = channel;
         }
         '''
 
     _fragShader2 = '''
-        in float fChannel;
+        in float vChannel;
         out vec4 FragColor;
 
         uniform vec4  uColor[{MAX_CHANNELS}];
 
         void main() {
-            if (0 < fract(fChannel)) discard;
-            FragColor = uColor[int(fChannel) % {MAX_COLORS}];
+            if (0 < fract(vChannel)) discard;
+            FragColor = uColor[int(vChannel) % {MAX_COLORS}];
         }
         ''' \
         .replace('{MAX_COLORS}', str(len(defaultColors))) \
@@ -1710,6 +1710,9 @@ class SpikePlot(Plot, pipeline.Node):
         self._pointerRead = 0
         self._lock = threading.Lock()
 
+        self._spikeLength = 0
+        self._data = np.array([])
+
     def __setattr__(self, name, value):
         if name in {'label'}:
             raise AttributeError('Cannot set attribute')
@@ -1952,7 +1955,7 @@ class SpikeOverlay(Plot, pipeline.Node):
 
         # number of spikes per channel stored in the buffer
         self._spikeCount = 1000 * self.figure.tsRange
-        self._channels = None
+        self._channels = 0
         self._pointSize = self.markerSize * getPixelRatio()
         self._lock = threading.Lock()
 
@@ -2183,7 +2186,10 @@ class SpikeFigure(Figure, pipeline.Node):
             pos += uMargin.xw / uCanvasSize;
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
-            vSpikeIndex = gl_VertexID / uSpikeLength;
+            vChannelIndex = gl_VertexID / (uSpikeCount * uSpikeLength);
+            vSpikeIndex = gl_VertexID % (uSpikeCount * uSpikeLength) /
+                uSpikeLength;
+
             float sampleIndex = gl_VertexID % uSpikeLength;
             vec2 vertex = vec2(sampleIndex / (uSpikeLength - 1),
                 (aData + 1) / 2);
@@ -2197,6 +2203,7 @@ class SpikeFigure(Figure, pipeline.Node):
 
     _fragShader = '''
         in float vSpikeIndex;
+        in float vChannelIndex;
 
         out vec4 FragColor;
 
@@ -2208,9 +2215,10 @@ class SpikeFigure(Figure, pipeline.Node):
         uniform vec2  uCanvasSize;  // pixels
         uniform float uPixelRatio;
 
-        uniform int   uChannels;
+        uniform int   uChannelCount;
         uniform int   uSpikeCount;
-        uniform int   uSpikeIndex;
+        uniform int   uSpikeLength;
+        uniform int   uSpikeIndex[{MAX_CHANNELS}];
         uniform vec4  uColor[{MAX_CHANNELS}];
 
         void main() {
@@ -2226,12 +2234,13 @@ class SpikeFigure(Figure, pipeline.Node):
 
             if (fragCoord.y > rect.y || rect.w > fragCoord.y) discard;
 
-            FragColor = uColor[0];
+            FragColor = uColor[int(vChannelIndex) % {MAX_COLORS}];
             FragColor.a *= 1 - mod(uSpikeIndex - 1 - vSpikeIndex,
                 uSpikeCount) / uSpikeCount;
         }
         ''' \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
+        .replace('{MAX_CHANNELS}', str(maxChannels)) \
+        .replace('{MAX_COLORS}', str(len(defaultColors)))
 
     def __init__(self, parent, **kwargs):
         defaults = dict()
@@ -2330,12 +2339,10 @@ class SpikeFigure(Figure, pipeline.Node):
             self._prog.setUniform('uChannels', '1f', self._channels)
             self._prog.setUniform('uSpikeLength', '1i', self._spikeLength)
             self._prog.setUniform('uSpikeCount', '1i', self._spikeCount)
-            self._prog.setUniform('uSpikeIndex', '1i', 0)
+            self._prog.setUniform('uSpikeIndex', '1iv',
+                (self._channels, self._pointerRead))
 
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
-
-        # self._labels = Text(self, text=self.label, pos=(0,1), margin=(4,4,0,0),
-        #     anchor=(0,1), fontSize=14, bold=True, fgColor=self.fgColor)
 
         super().initializeGL()
 
@@ -2347,37 +2354,41 @@ class SpikeFigure(Figure, pipeline.Node):
             self._prog.setUniform('uParentSize', '2f', self.parent.sizePxl)
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
-    def _subVBO(self, frm, to, data):
+    def _subVBO(self, ch, frm, to, data):
         '''Update a subregion of VBO'''
         # nothing to update
         if frm == to:
             return
         # wrap around
         if frm > to:
-            self._subVBO(frm, self._spikeCount, data)
-            self._subVBO(0, to, data)
+            self._subVBO(ch, frm, self._spikeCount, data)
+            self._subVBO(ch, 0, to, data)
             return
 
-        self._prog.subVBO('aData', frm * self._spikeLength * sizeFloat,
-            data[frm:to, :])
+        self._prog.subVBO('aData', (ch * self._spikeCount + frm) *
+            self._spikeLength * sizeFloat, data[ch, frm:to, :])
 
     def paintGL(self):
         if not self.visible: return
 
-        # with self._prog:
-        #     # update subregion of VBO with the newly written spikes
-        #     with self._lock:
-        #         if self._pointerRead != self._pointerWrite:
-        #             if self._pointerWrite-self._pointerRead >= self._spikeCount:
-        #                 self._subVBO(0, self._spikeCount, self._data)
-        #             else:
-        #                 self._subVBO(self._pointerRead % self._spikeCount,
-        #                     self._pointerWrite % self._spikeCount, self._data)
-        #             self._pointerRead = self._pointerWrite
-        #             self._prog.setUniform('uSpikeIndex', '1i',
-        #                 self._pointerWrite)
-        #
-        #     glDrawArrays(GL_LINE_STRIP, 0, self._data.size)
+        with self._prog:
+            # update subregion of VBO with the newly written spikes
+            with self._lock:
+                for ch in range(self._channels):
+                    if self._pointerRead[ch] != self._pointerWrite[ch]:
+                        if (self._pointerWrite[ch] - self._pointerRead[ch] >=
+                                self._spikeCount):
+                            self._subVBO(ch, 0, self._spikeCount, self._data)
+                        else:
+                            self._subVBO(ch,
+                                self._pointerRead[ch] % self._spikeCount,
+                                self._pointerWrite[ch] % self._spikeCount,
+                                self._data)
+                self._pointerRead = self._pointerWrite.copy()
+                self._prog.setUniform('uSpikeIndex', '1iv',
+                    (self._channels, self._pointerRead))
+
+            glDrawArrays(GL_LINE_STRIP, 0, self._data.size)
 
         super().paintGL()
 
@@ -2658,7 +2669,7 @@ class MainWindow(QtWidgets.QWidget):
             pipeline.Thread() >> pipeline.SpikeDetector() >> (
                 self.scaler2 >> self.spikeOverlay,
                 pipeline.Split() >> self.spikePlots
-                #self.spikeFigure
+                # self.spikeFigure
             )
         )
 
