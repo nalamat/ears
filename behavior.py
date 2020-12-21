@@ -28,10 +28,9 @@ import hdf5
 import misc
 import pump
 import config
-import pipeline
+import pypeline
 import plotting
 import globals          as     gb
-import EasyDAQmx        as     daq
 
 
 log = logging.getLogger(__name__)
@@ -199,8 +198,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                             label='Spout', labelOffset=.5,
                             yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
 
-        (daqs.analogInput >> pipeline.DownsampleAverage(ds=4) >>
-            pipeline.Split() >> (self.speakerTrace,
+        (daqs.analogInput >> pypeline.DownsampleAverage(ds=4) >>
+            pypeline.Split() >> (self.speakerTrace,
                                  self.micTrace,
                                  self.pokeTrace,
                                  self.spoutTrace))
@@ -209,9 +208,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
             self.micStorage     = hdf5.AnalogStorage('/trace/mic')
 
-            daqs.analogInput >> pipeline.Split() >> (self.speakerStorage,
+            daqs.analogInput >> pypeline.Split() >> (self.speakerStorage,
                                                      self.micStorage,
-                                                     pipeline.DummySink(2))
+                                                     pypeline.DummySink(2))
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,

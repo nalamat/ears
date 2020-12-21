@@ -14,7 +14,7 @@ import threading
 # import multiprocessing
 import tables          as tb
 
-import pipeline
+import pypeline
 
 
 log   = logging.getLogger(__name__)
@@ -169,7 +169,7 @@ def _checkFile():
 #     log.info('Stopping HFD5 loop')
 
 
-class AnalogStorage(pipeline.Sampled):
+class AnalogStorage(pypeline.Sampled):
     def __init__(self, hdf5Node, compLib='zlib', compLevel=1, **kwargs):
         '''
         Args:

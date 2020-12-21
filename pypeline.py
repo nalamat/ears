@@ -1,4 +1,4 @@
-'''Pipeline model for routing and online processing of data streams.
+'''Object-oriented model for routing and online processing of data streams.
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears

@@ -23,7 +23,7 @@ import daqs
 import misc
 import hdf5
 import config
-import pipeline
+import pypeline
 import plotting
 import globals     as gb
 
@@ -113,18 +113,18 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         #                         label=lineLabels[3],
         #                         yScale=.1, yOffset=11, yGap=-1)
 
-        self.grandAverage      = pipeline.GrandAverage()
-        self.filter            = pipeline.LFilter(fl=300, fh=6e3, n=6)
+        self.grandAverage      = pypeline.GrandAverage()
+        self.filter            = pypeline.LFilter(fl=300, fh=6e3, n=6)
 
-        # processing and plotting pipeline
-        (daqs.physiologyInput >> pipeline.Thread() >> self.filter
-            >> self.grandAverage >> pipeline.DownsampleMinMax(ds=32)
+        # processing and plotting pypeline
+        (daqs.physiologyInput >> pypeline.Thread() >> self.filter
+            >> self.grandAverage >> pypeline.DownsampleMinMax(ds=32)
             >> self.physiologyTrace)
-            # >> pipeline.Split() >> (pipeline.Node(), pipeline.DummySink(14))
+            # >> pypeline.Split() >> (pypeline.Node(), pypeline.DummySink(14))
             # >> (self.physiologyTrace0,
-            #    pipeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
-            #    pipeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
-            #    pipeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
+            #    pypeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
+            #    pypeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
+            #    pypeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
             #    ))
 
 

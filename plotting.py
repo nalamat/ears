@@ -20,7 +20,7 @@ from   PyQt5        import QtCore, QtWidgets, QtGui
 
 import hdf5
 import misc
-import pipeline
+import pypeline
 
 
 log = logging.getLogger(__name__)
@@ -855,7 +855,7 @@ class AnalogChannel(BaseChannel):
             self._refresh()
 
 
-class AnalogPlot(pipeline.Sampled):
+class AnalogPlot(pypeline.Sampled):
     '''All-in-one class for storage and plotting of multiline analog signals.
 
     Utilizes the `hdf5` module for storage in HDF5 file format.

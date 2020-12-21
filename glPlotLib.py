@@ -33,7 +33,7 @@ from   OpenGL.GL   import *
 
 import misc
 import config
-import pipeline
+import pypeline
 
 
 log = logging.getLogger(__name__)
@@ -1039,7 +1039,7 @@ class Plot(Item):
         super().__setattr__(name, value)
 
 
-class AnalogPlot(Plot, pipeline.Sampled):
+class AnalogPlot(Plot, pypeline.Sampled):
     _vertShader = '''
         in vec2 aVertex;
 
@@ -1344,7 +1344,7 @@ class AnalogPlot(Plot, pipeline.Sampled):
         super().paintGL()
 
 
-class EpochPlot(Plot, pipeline.Node):
+class EpochPlot(Plot, pypeline.Node):
     _vertShader = '''
         in float aData;
 
@@ -1625,7 +1625,7 @@ class EpochPlot(Plot, pipeline.Node):
         super().paintGL()
 
 
-class SpikePlot(Plot, pipeline.Node):
+class SpikePlot(Plot, pypeline.Node):
     _vertShader = '''
         in float aData;
 
@@ -1825,7 +1825,7 @@ class SpikePlot(Plot, pipeline.Node):
         super().paintGL()
 
 
-class SpikeOverlay(Plot, pipeline.Node):
+class SpikeOverlay(Plot, pypeline.Node):
     _vertShader = '''
         in vec2 aVertex;
 
@@ -2158,7 +2158,7 @@ class Figure(Item):
             (posPxl < self.posPxl + self.sizePxl)).all()
 
 
-class SpikeFigure(Figure, pipeline.Node):
+class SpikeFigure(Figure, pypeline.Node):
     _vertShader = '''
         in float aData;
 
@@ -2393,7 +2393,7 @@ class SpikeFigure(Figure, pipeline.Node):
         super().paintGL()
 
 
-class Scope(Figure, pipeline.Sampled):
+class Scope(Figure, pypeline.Sampled):
     class XLabels(TextArray):
         _fragShader = '''
             in vec2  gPos;
@@ -2651,29 +2651,29 @@ class MainWindow(QtWidgets.QWidget):
         # self.spikeFigure = SpikeFigure(self.canvas, pos=(.7,0), size=(.3,1),
         #    margin=(0,20,10,10))
 
-        self.generator = pipeline.SpikeGenerator(fs=self.fs,
+        self.generator = pypeline.SpikeGenerator(fs=self.fs,
             channels=self.channels)
-        self.filter     = pipeline.LFilter(fl=100, fh=6000)
-        self.grandAvg   = pipeline.GrandAverage()
+        self.filter     = pypeline.LFilter(fl=100, fh=6000)
+        self.grandAvg   = pypeline.GrandAverage()
         self.scaleStep  = 0
         self.scaleRatio = 1.2
-        self.scaler1    = pipeline.Func(lambda data:
+        self.scaler1    = pypeline.Func(lambda data:
             data * self.scaleRatio ** self.scaleStep)
-        self.scaler2    = pipeline.Func(lambda data:
+        self.scaler2    = pypeline.Func(lambda data:
             [[(ts, peak * self.scaleRatio ** self.scaleStep, spike)
                 for (ts, peak, spike) in channelData] for channelData in data])
 
         self.generator >> self.grandAvg >> self.filter >> (
             self.scope,
             self.scaler1 >> self.physiologyPlot,
-            pipeline.Thread() >> pipeline.SpikeDetector() >> (
+            pypeline.Thread() >> pypeline.SpikeDetector() >> (
                 self.scaler2 >> self.spikeOverlay,
-                pipeline.Split() >> self.spikePlots
+                pypeline.Split() >> self.spikePlots
                 # self.spikeFigure
             )
         )
 
-        # self.generator = pipeline.SineGenerator(fs=self.fs,
+        # self.generator = pypeline.SineGenerator(fs=self.fs,
         #     channels=self.channels, noisy=True)
         # self.generator >> self.scope >> self.physiologyPlot
 
