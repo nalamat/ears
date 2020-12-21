@@ -29,7 +29,8 @@ and Hearing (NESH) lab at New Jersey Institute of Technology (NJIT) and Rutgers
 University, and was supported by funding from NIH NIDCD R03-DC014008.
 
 Here's a video of the software in action:
-[recording-1.mp4](media/recording-1.mp4?raw=true)
+
+[![Live recording](media/recording-1.gif?raw=true)](media/recording-1.mp4?raw=true)
 
 
 ## How to use
