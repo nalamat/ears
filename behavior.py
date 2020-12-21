@@ -22,7 +22,6 @@ import scipy            as     sp
 import datetime         as     dt
 from   PyQt5            import QtCore, QtWidgets, QtGui
 
-import daq
 import gui
 import daqs
 import hdf5
@@ -32,6 +31,7 @@ import config
 import pipeline
 import plotting
 import globals          as     gb
+import EasyDAQmx        as     daq
 
 
 log = logging.getLogger(__name__)

@@ -10,11 +10,11 @@ Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 import logging
-import numpy   as np
+import numpy     as np
 
-import daq
 import config
-import globals as gb
+import globals   as gb
+import EasyDAQmx as daq
 
 
 log = logging.getLogger(__name__)
