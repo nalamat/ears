@@ -552,6 +552,36 @@ class LFilter(Sampled):
         super()._written(dataOut, source)
 
 
+class Scaler(Func):
+    '''Multiply data by the given scale.'''
+
+    @property
+    def scale(self):
+        '''Scale factor'''
+        return self._scale
+
+    @scale.setter
+    def scale(self, scale):
+        self._scale = scale
+
+    @property
+    def dB(self):
+        return self._dB
+
+    def __init__(self, scale=None, dB=False, **kwargs):
+        self._scale = scale
+        self._dB = dB
+
+        if dB:
+            if self._scale is None: self._scale = 0
+            func = lambda data: data * 10 ** (self._scale / 20)
+        else:
+            if self._scale is None: self._scale = 1
+            func = lambda data: data * self._scale
+
+        super().__init__(func, **kwargs)
+
+
 class Downsample(Sampled):
     def __init__(self, ds, bin=None, **kwargs):
         if ds < 1:          raise ValueError('`ds` should be >= 1')
