@@ -83,6 +83,17 @@ def getPixelRatio():
     '''
     return QtWidgets.QApplication.screens()[0].devicePixelRatio()
 
+def setSurfaceFormat():
+    '''Set Qt surface format: samples, profile and version.
+    Setting surface format before running Qt application is mandotary in macOS.
+    '''
+    surfaceFormat = QtGui.QSurfaceFormat()
+    surfaceFormat.setSamples(glSamples)
+    surfaceFormat.setProfile(QtGui.QSurfaceFormat.CoreProfile)
+    surfaceFormat.setMajorVersion(glVersion[0])
+    surfaceFormat.setMinorVersion(glVersion[1])
+    QtGui.QSurfaceFormat.setDefaultFormat(surfaceFormat)
+
 
 class Program:
     '''OpenGL shader program.'''
@@ -2663,7 +2674,7 @@ class MainWindow(QtWidgets.QWidget):
             [[(ts, peak * self.scaleRatio ** self.scaleStep, spike)
                 for (ts, peak, spike) in channelData] for channelData in data])
 
-        self.generator >> self.grandAvg >> self.filter >> (
+        self.generator >> pypeline.Thread() >> self.grandAvg >> self.filter >> (
             self.scope,
             self.scaler1 >> self.physiologyPlot,
             pypeline.Thread() >> pypeline.SpikeDetector() >> (
@@ -2718,13 +2729,7 @@ if __name__ == '__main__':
     sys._excepthook = sys.excepthook
     sys.excepthook  = masterExceptionHook
 
-    # setting surface format before running Qt application is mandotary in macOS
-    surfaceFormat = QtGui.QSurfaceFormat()
-    surfaceFormat.setSamples(glSamples)
-    surfaceFormat.setProfile(QtGui.QSurfaceFormat.CoreProfile)
-    surfaceFormat.setMajorVersion(glVersion[0])
-    surfaceFormat.setMinorVersion(glVersion[1])
-    QtGui.QSurfaceFormat.setDefaultFormat(surfaceFormat)
+    setSurfaceFormat()
 
     app = QtWidgets.QApplication([])
     app.setApplicationName = config.APP_NAME

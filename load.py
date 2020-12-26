@@ -27,6 +27,7 @@ if __name__=='__main__':
     import physiology
     import calibration
     import globals     as gb
+    import glPlotLib   as glp
 
 
     try:
@@ -74,6 +75,7 @@ if __name__=='__main__':
         sys.excepthook  = masterExceptionHook
 
         # initialize app
+        glp.setSurfaceFormat()
         app = QtWidgets.QApplication([])
         app.setApplicationName = config.APP_NAME
         app.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
