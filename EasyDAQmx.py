@@ -163,7 +163,7 @@ class BaseTask():
             self._clear()
 
 
-class DigitalInput(BaseTask):
+class DigitalInput(BaseTask, pypeline.Node):
     @property
     def lineNames(self):
         return self._lineNames
@@ -210,6 +210,8 @@ class DigitalInput(BaseTask):
 
         super()._postInit()
 
+        pypeline.Node.__init__(self)
+
         if lineNames:
             if len(lineNames) != self.lineCount:
                 raise ValueError('When specified, length of `lineNames` '
@@ -252,6 +254,8 @@ class DigitalInput(BaseTask):
                             log.debug('%s task detected %s edge on %s at '
                                 '%.3f', self.name, edge, name, ts)
                             self.edgeDetected(self, name, edge, ts)
+                            # pass data down into the pipeline
+                            pypeline.Node.write(self, data)
 
                 self._lastData = data
                 return 0
