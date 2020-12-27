@@ -1449,7 +1449,7 @@ class EpochPlot(Plot, pypeline.Node):
         }
         '''
 
-    _geomShader = '''
+    _geomShaderRect = '''
         layout (lines) in;
         layout (triangle_strip, max_vertices = 8) out;
 
@@ -1530,7 +1530,7 @@ class EpochPlot(Plot, pypeline.Node):
         }
         '''
 
-    _fragShader = '''
+    _fragShaderRect = '''
         in float gPos;
 
         out vec4 FragColor;
@@ -1569,10 +1569,180 @@ class EpochPlot(Plot, pypeline.Node):
         }
         '''
 
+    _geomShaderMarker = '''
+        layout (lines) in;
+        layout (points, max_vertices = 8) out;
+
+        out float gPos;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uMarkerSize;
+
+        uniform float uTs;
+        uniform float uTsRange;
+
+        void emitRectangle(vec4 pos0, vec4 pos1, vec2 pos, vec2 size) {
+            gl_Position = pos0;
+            gPos = ((pos0.x + 1) / 2 - pos.x) / size.x;
+            EmitVertex();
+
+            gl_Position = pos1;
+            gPos = ((pos1.x + 1) / 2 - pos.x) / size.x;
+            EmitVertex();
+
+            EndPrimitive();
+        }
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            // left and right bounds (NDC)
+            float left = pos.x * 2 - 1;
+            float right = (pos.x + size.x) * 2 - 1;
+
+            float posTs = pos.x +
+                (uTs / uTsRange - int(uTs / uTsRange)) * size.x;
+            posTs = posTs * 2 - 1;
+
+            // main epoch
+            vec4 pos0 = gl_in[0].gl_Position;
+            vec4 pos1 = gl_in[1].gl_Position;
+
+            if (pos1.x <= posTs - size.x * 2) return;
+
+            if (pos1.x >= left) {
+                if (pos0.x < left) pos0.x = left;
+
+                emitRectangle(pos0, pos1, pos, size);
+            }
+
+            // ghost epoch
+            pos0 = gl_in[0].gl_Position;
+            pos1 = gl_in[1].gl_Position;
+
+            if (pos0.x < left) {
+                pos0.x += size.x * 2;
+                pos1.x += size.x * 2;
+
+                if (pos0.x < posTs) pos0.x = posTs;
+                if (right < pos1.x) pos1.x = right;
+
+                emitRectangle(pos0, pos1, pos, size);
+            }
+        }
+        '''
+
+    _fragShaderMarker = '''
+        in float gPos;
+
+        out vec4 FragColor;
+
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+        uniform float uPixelRatio;
+        uniform vec4  uFgColor;
+        uniform float uMarkerSize;
+
+        uniform float uTs;
+        uniform float uTsRange;
+        uniform float uFadeRange;  // unit
+
+        void main() {
+            // NDC point coordinate (-1 to +1)
+            vec2 point = 2 * (gl_PointCoord - .5);
+            float point2 = dot(point, point);   // square distance from origin
+            float pxl = 2 / uMarkerSize;        // pixel size in NDC point coord
+
+            // full square
+            float a = 1;
+
+            // hollow square
+            //a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
+            //    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
+            //a = clamp(a, 0, 1);
+
+            // +
+            //a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
+            //    step(-pxl/2, point.x) - step(pxl/2, point.x);
+            //a = clamp(a, 0, 1);
+
+            // x
+            //a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+            //    smoothstep(0, pxl, abs(point.y) - abs(point.x));
+
+            // *
+            //a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
+            //    step(-pxl/2, point.x) - step(pxl/2, point.x) +
+            //    smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+            //    smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
+            //    step(point2, 1);
+            //a = clamp(a, 0, 1);
+
+            // full circle
+            // note: there's no performance difference with step vs smoothstep
+            float r0 = 1;
+            float r1 = 1 - 1 * pxl;
+            a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
+
+            // hollow circle
+            float r2 = 1 - 2 * pxl;
+            //a = smoothstep(r2 * r2, r1 * r1, point2) -
+            //    smoothstep(r1 * r1, r0 * r0, point2);
+
+            // down triangle
+            //a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
+
+            // up triangle
+            //a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
+
+            // left triangle
+            //a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
+
+            // right triangle
+            //a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+
+            // apply oscilloscope cyclic fading effect
+            FragColor = uFgColor;
+
+            float diff = gPos - (uTs / uTsRange - int(uTs / uTsRange));
+            float fade = 1;
+            if (between(0, diff + 1, uFadeRange))
+                fade = (diff + 1) / uFadeRange;
+            else if (between(0, diff, uFadeRange))
+                fade = diff / uFadeRange;
+            fade = sinFade(fade);
+            FragColor.a *= fade * a;
+        }
+        '''
+
     def __init__(self, parent, **kwargs):
-        defaults = dict(label='', fgColor=(0,0,1,.6))
+        '''
+        Args:
+            type (str): 'rect' or 'marker'
+        '''
+
+        defaults = dict(label='', fontSize=10, fgColor=(0,0,1,.6),
+            type='rect', markerSize=6)
 
         self._initProps(defaults, kwargs)
+
+        if self.type not in ['rect', 'marker']:
+            raise ValueError('`type` should be either "rect" or "marker"')
 
         super().__init__(parent, **kwargs)
 
@@ -1581,10 +1751,11 @@ class EpochPlot(Plot, pypeline.Node):
         self._pointerRead = 0      # pointer to last element read from _data
         self._partial = None
         self._data = np.zeros(self._cacheSize, dtype=np.float32)
+        self._pixelRatio = getPixelRatio()
         self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
-        if name in {'label'}:
+        if name in {'label', 'fontSize', 'fgColor'}:
             raise AttributeError('Cannot set attribute')
 
         super().__setattr__(name, value)
@@ -1634,11 +1805,17 @@ class EpochPlot(Plot, pypeline.Node):
     def initializeGL(self):
         # properties linked with a uniform variable in the shader
         self._uProps = dict(pos=('uPos', '2f'), size=('uSize', '2f'),
-            margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'))
+            margin=('uMargin', '4f'), fgColor=('uFgColor', '4f'),
+            markerSize=('uMarkerSize', '1f'))
 
-        self._prog = Program(vert=self._vertShader,
-            geom=self._geomShader,
-            frag=self._fragShader)
+        if self.type == 'rect':
+            self._prog = Program(vert=self._vertShader,
+                geom=self._geomShaderRect,
+                frag=self._fragShaderRect)
+        else:
+            self._prog = Program(vert=self._vertShader,
+                geom=self._geomShaderMarker,
+                frag=self._fragShaderMarker)
 
         with self._prog:
             for name, value in self._uProps.items():
@@ -1692,6 +1869,8 @@ class EpochPlot(Plot, pypeline.Node):
 
             self._prog.setUniform('uTs', '1f', self.figure.ts)
 
+            if self.type == 'marker':
+                glPointSize(self.markerSize * self._pixelRatio)
             glDrawArrays(GL_LINES, 0, self._data.size)
 
         super().paintGL()
@@ -2704,7 +2883,7 @@ class MainWindow(QtWidgets.QWidget):
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             label='Target', fgColor=(0,1,0,.6))
         self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
-            label='Pump', fgColor=(0,0,1,.6))
+            label='Pump', fgColor=(0,0,1,1), type='marker')
 
         self.spikeCont = Item(self.canvas, pos=(.7,0), size=(.3,1),
             margin=(0,20,10,10))
