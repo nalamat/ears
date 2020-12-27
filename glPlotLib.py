@@ -294,10 +294,10 @@ class Item:
             return super().__getattribute__(name)
 
     def __setattr__(self, name, value):
-        if name != '_props' and hasattr(self, '_props') and name in self._props:
-            if name in {'parent', 'posPxl', 'sizePxl'}:
-                raise AttributeError('Cannot set attribute')
+        if name in {'parent', 'posPxl', 'sizePxl'}:
+            raise AttributeError('Cannot set attribute')
 
+        if name != '_props' and hasattr(self, '_props') and name in self._props:
             self._props[name] = value
 
             if name in {'pos', 'size', 'margin'}:
@@ -1116,18 +1116,21 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
         uniform int   uNsRange;
         uniform int   uChannels;
+        uniform float uYPos[{MAX_CHANNELS}];
+        uniform float uYSize[{MAX_CHANNELS}];
 
         void main() {
             int channel = gl_VertexID / uNsRange;
             vec2 vertex = vec2(float(gl_VertexID % uNsRange) / uNsRange,
-                ((aVertex + 1) / 2 + uChannels - 1 - channel) / uChannels);
+                aVertex / 2 * uYSize[channel] + uYPos[channel]);
 
             vertex = vertex * 2 - vec2(1);
 
             gl_Position = vec4(vertex, 0, 1);
             vChannel = channel;
         }
-        '''
+        ''' \
+        .replace('{MAX_CHANNELS}', str(maxChannels))
 
     _fragShader2 = '''
         in float vChannel;
@@ -1145,34 +1148,55 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
     def __init__(self, parent, **kwargs):
         '''
+        Args:
+            label (n strs)
+            ypos (func or n ints): Traces are evenly spaced by default.
+            fontSize (int)
+            fgColor (nx4 floats): RGBA 0-1.
         '''
 
         # properties with their default values
-        defaults = dict(label=None, fgColor=(0,0,0,1))
+        defaults = dict(label=[], fontSize=10, fgColor=(0,0,0,1),
+            ypos=lambda ch, channels: 1-(ch+.5)/channels,
+            ysize=lambda ch, channels: 1/channels)
 
         self._initProps(defaults, kwargs)
 
         if not isinstance(parent, Scope):
             raise TypeError('Parent must be a Scope')
 
+        # verify property values
+        if isinstance(self.label, str) or not misc.iterable(self.label):
+            self._props['label'] = [self.label]
+        self._props['label'] = list(map(str, self.label))
+
+        if not callable(self.ypos) and not misc.iterable(self.ypos):
+            raise ValueError('`ypos` should either be callable or an iterator')
+        if misc.iterable(self.ypos):
+            self.ypos = np.array(self.ypos, dtype=np.float32)
+
+        if not callable(self.ysize) and not misc.iterable(self.ysize):
+            raise ValueError('`ysize` should either be callable or an iterator')
+        if misc.iterable(self.ysize):
+            self.ysize = np.array(self.ysize, dtype=np.float32)
+
+        if not isinstance(self.fgColor, np.ndarray):
+            self._props['fgColor'] = np.array(self.fgColor, dtype=np.float32)
+        if self.fgColor.ndim == 1:
+            self._props['fgColor'] = self.fgColor[None,:]
+        if self.fgColor.ndim != 2:
+            raise ValueError('`fgColor` has to be 1D or 2D')
+        if self.fgColor.shape[1] != 4:
+            raise ValueError('`fgColor` needs for color components (RGBA)')
+        if self.fgColor.shape[0] > maxChannels:
+            raise ValueError('`fgColor` can\'t have more than %d colors' %
+                maxChannels)
+
         super().__init__(parent, **kwargs)
 
-        self.fgColor = self.fgColor    # verify value (in __setattr__)
-
     def __setattr__(self, name, value):
-        # verify value
-        if name == 'fgColor':
-            if not isinstance(value, np.ndarray):
-                value = np.array(value, dtype=np.float32)
-            if value.ndim == 1:
-                value = value[None,:]
-            if value.ndim != 2:
-                raise ValueError('`fgColor` has to be 1D or 2D')
-            if value.shape[1] != 4:
-                raise ValueError('`fgColor` needs for color components RGBA')
-            if value.shape[0] > maxChannels:
-                raise ValueError('`fgColor` can\'t have more than %d colors' %
-                    maxChannels)
+        if name in {'label', 'fontSize', 'fgColor'}:
+            raise AttributeError('Cannot set attribute')
 
         # set attribute
         super().__setattr__(name, value)
@@ -1184,19 +1208,28 @@ class AnalogPlot(Plot, pypeline.Sampled):
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
 
-        elif name == 'fgColor':
-            with self._prog2:
-                self._prog2.setUniform('uColorCount', '1i', value.shape[0])
-                self._prog2.setUniform('uColor', '4fv', (value.shape[0], value))
-
     def _configuring(self, params, sinkParams):
         super()._configuring(params, sinkParams)
 
         if params['channels'] > maxChannels:
             raise ValueError('Channel count cannot exceed %d' % maxChannels)
+        if not callable(self.ypos) and params['channels'] != len(self.ypos):
+            raise ValueError('Size of `ypos` must match number of `channels`')
+        if not callable(self.ysize) and params['channels'] != len(self.ysize):
+            raise ValueError('Size of `ysize` must match number of `channels`')
 
     def _configured(self, params, sinkParams):
         super()._configured(params, sinkParams)
+
+        if callable(self.ypos):
+            self.ypos = [self.ypos(ch, self.channels)
+                for ch in range(self.channels)]
+            self.ypos = np.array(self.ypos, dtype=np.float32)
+
+        if callable(self.ysize):
+            self.ysize = [self.ysize(ch, self.channels)
+                for ch in range(self.channels)]
+            self.ysize = np.array(self.ysize, dtype=np.float32)
 
         self._nsRange = int(np.ceil(self.figure.tsRange * self.fs))
 
@@ -1260,6 +1293,10 @@ class AnalogPlot(Plot, pypeline.Sampled):
         with self._prog2:
             self._prog2.setUniform('uNsRange', '1i', np.int32(self._nsRange))
             self._prog2.setUniform('uChannels', '1i', np.int32(self.channels))
+            self._prog2.setUniform('uYPos', '1fv',
+                (self.ypos.size, self.ypos))
+            self._prog2.setUniform('uYSize', '1fv',
+                (self.ysize.size, self.ysize))
             self._prog2.setUniform('uColorCount', '1i', self.fgColor.shape[0])
             self._prog2.setUniform('uColor', '4fv',
                 (self.fgColor.shape[0], self.fgColor))
@@ -1267,10 +1304,10 @@ class AnalogPlot(Plot, pypeline.Sampled):
             self._prog2.setVBO('aVertex', GL_FLOAT, 1, self._buffer._data,
                 GL_DYNAMIC_DRAW)
 
-        for channel in range(self.channels):
-            self.figure.addYLabel(str(channel+1),
-                (1 - (channel+.5)/self.channels) * self.size[1] + self.pos[1],
-                self.fgColor[channel % self.fgColor.shape[0]], 18)
+        for ch, label in zip(range(self.channels), self.label):
+            self.figure.addYLabel(label,
+                self.ypos[ch] * self.size[1] + self.pos[1],
+                self.fgColor[ch % self.fgColor.shape[0]], self.fontSize)
 
         self.refresh()
 
@@ -1614,7 +1651,7 @@ class EpochPlot(Plot, pypeline.Node):
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
         self.figure.addYLabel(self.label, self.pos[1] + self.size[1] * .5,
-            self.fgColor, 14)
+            self.fgColor, self.fontSize)
 
         super().initializeGL()
 
@@ -2662,7 +2699,7 @@ class MainWindow(QtWidgets.QWidget):
             xTicks=np.linspace(0, 1, self.tsRange+1),
             yTicks=np.r_[np.linspace(.1, 1, yTickCount), .05])
         self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9),
-            fgColor=defaultColors)
+            label=range(1,self.channels+1), fontSize=18, fgColor=defaultColors)
         self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             label='Target', fgColor=(0,1,0,.6))
