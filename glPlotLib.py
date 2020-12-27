@@ -488,7 +488,7 @@ class Text(Item):
         '''
         ratio = getPixelRatio()
         margin = (np.array(self.margin) * ratio).astype(np.int)
-        font = QtGui.QFont('arial', self.fontSize * ratio,
+        font = QtGui.QFont('arial', int(self.fontSize * ratio),
             QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal, self.italic)
 
         w, h = Text.getSize(self.text, font)
@@ -502,7 +502,7 @@ class Text(Item):
 
         painter = QtGui.QPainter()
         painter.begin(image)
-        painter.setPen(QtGui.QColor(*np.array(self.fgColor)*255))
+        painter.setPen(QtGui.QColor(*(np.array(self.fgColor)*255).astype(int)))
         painter.setFont(font)
         painter.drawText(margin[0], margin[1],
             w - margin[0] - margin[2], h - margin[1] - margin[3],
@@ -727,7 +727,7 @@ class TextArray(Item):
             pad = len(self.texts) - fontSizes.shape[0]
             fontSizes = np.pad(fontSizes, (0,pad), 'edge')
         bold = QtGui.QFont.Bold if self.bold else QtGui.QFont.Normal
-        fonts = [QtGui.QFont('arial', fontSize, bold, self.italic)
+        fonts = [QtGui.QFont('arial', int(fontSize), bold, self.italic)
             for fontSize in fontSizes]
 
         # calcualte size of each text instance in pixels
@@ -755,7 +755,7 @@ class TextArray(Item):
 
             painter = QtGui.QPainter()
             painter.begin(image)
-            painter.setPen(QtGui.QColor(*fgColors[i]*255))
+            painter.setPen(QtGui.QColor(*(fgColors[i]*255).astype(int)))
             painter.setFont(fonts[i])
             painter.drawText(0, 0, w, h, self.align, text)
             painter.end()
@@ -2572,7 +2572,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         self._timerDraw = QtCore.QTimer()
         self._timerDraw.timeout.connect(self.update)
-        self._timerDraw.setInterval(1000/60)
+        self._timerDraw.setInterval(int(1000/60))
 
         self._timerStats = QtCore.QTimer()
         self._timerStats.timeout.connect(self.updateStats)
