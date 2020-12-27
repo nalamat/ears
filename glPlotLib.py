@@ -988,8 +988,8 @@ class Grid(Rectangle):
 
         super().__init__(parent, **kwargs)
 
-        self.xTicks = self.xTicks
-        self.yTicks = self.yTicks
+        self.xTicks = self.xTicks    # verify value (in __setattr__)
+        self.yTicks = self.yTicks    # verify value (in __setattr__)
 
     def __setattr__(self, name, value):
         # verify value
@@ -1024,8 +1024,8 @@ class Grid(Rectangle):
 
         # set uniforms
         with self._prog:
-            self.xTicks = self.xTicks
-            self.yTicks = self.yTicks
+            self.xTicks = self.xTicks    # set uniform (in __setattr__)
+            self.yTicks = self.yTicks    # set uniform (in __setattr__)
             self.dash = self.dash
 
 
@@ -1134,13 +1134,13 @@ class AnalogPlot(Plot, pypeline.Sampled):
         out vec4 FragColor;
 
         uniform vec4  uColor[{MAX_CHANNELS}];
+        uniform int   uColorCount;
 
         void main() {
             if (0 < fract(vChannel)) discard;
-            FragColor = uColor[int(vChannel) % {MAX_COLORS}];
+            FragColor = uColor[int(vChannel) % uColorCount];
         }
         ''' \
-        .replace('{MAX_COLORS}', str(len(defaultColors))) \
         .replace('{MAX_CHANNELS}', str(maxChannels))
 
     def __init__(self, parent, **kwargs):
@@ -1148,7 +1148,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
         '''
 
         # properties with their default values
-        defaults = dict()
+        defaults = dict(label=None, fgColor=(0,0,0,1))
 
         self._initProps(defaults, kwargs)
 
@@ -1157,14 +1157,37 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
         super().__init__(parent, **kwargs)
 
+        self.fgColor = self.fgColor    # verify value (in __setattr__)
+
     def __setattr__(self, name, value):
+        # verify value
+        if name == 'fgColor':
+            if not isinstance(value, np.ndarray):
+                value = np.array(value, dtype=np.float32)
+            if value.ndim == 1:
+                value = value[None,:]
+            if value.ndim != 2:
+                raise ValueError('`fgColor` has to be 1D or 2D')
+            if value.shape[1] != 4:
+                raise ValueError('`fgColor` needs for color components RGBA')
+            if value.shape[0] > maxChannels:
+                raise ValueError('`fgColor` can\'t have more than %d colors' %
+                    maxChannels)
+
+        # set attribute
         super().__setattr__(name, value)
 
         if not hasattr(self, '_initialized') or not self._initialized: return
 
+        # set uniforms
         if name != '_uProps' and hasattr(self, '_uProps') and \
                 name in self._uProps:
             self._prog.setUniform(*self._uProps[name], value)
+
+        elif name == 'fgColor':
+            with self._prog2:
+                self._prog2.setUniform('uColorCount', '1i', value.shape[0])
+                self._prog2.setUniform('uColor', '4fv', (value.shape[0], value))
 
     def _configuring(self, params, sinkParams):
         super()._configuring(params, sinkParams)
@@ -1237,8 +1260,9 @@ class AnalogPlot(Plot, pypeline.Sampled):
         with self._prog2:
             self._prog2.setUniform('uNsRange', '1i', np.int32(self._nsRange))
             self._prog2.setUniform('uChannels', '1i', np.int32(self.channels))
+            self._prog2.setUniform('uColorCount', '1i', self.fgColor.shape[0])
             self._prog2.setUniform('uColor', '4fv',
-                (self.channels, defaultColors))
+                (self.fgColor.shape[0], self.fgColor))
 
             self._prog2.setVBO('aVertex', GL_FLOAT, 1, self._buffer._data,
                 GL_DYNAMIC_DRAW)
@@ -1246,7 +1270,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
         for channel in range(self.channels):
             self.figure.addYLabel(str(channel+1),
                 (1 - (channel+.5)/self.channels) * self.size[1] + self.pos[1],
-                defaultColors[channel % len(defaultColors)], 18)
+                self.fgColor[channel % self.fgColor.shape[0]], 18)
 
         self.refresh()
 
@@ -2637,7 +2661,8 @@ class MainWindow(QtWidgets.QWidget):
             margin=(60,20,20,10), tsRange=self.tsRange,
             xTicks=np.linspace(0, 1, self.tsRange+1),
             yTicks=np.r_[np.linspace(.1, 1, yTickCount), .05])
-        self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9))
+        self.physiologyPlot = AnalogPlot(self.scope, pos=(0,.1), size=(1,.9),
+            fgColor=defaultColors)
         self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             label='Target', fgColor=(0,1,0,.6))
