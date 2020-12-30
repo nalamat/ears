@@ -1417,7 +1417,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
 
 class EpochPlot(Plot, pypeline.Node):
-    _vertShader = '''
+    _vertShaderRect = '''
         in float aData;
 
         uniform vec2  uPos;         // unit
@@ -1569,11 +1569,54 @@ class EpochPlot(Plot, pypeline.Node):
         }
         '''
 
-    _geomShaderMarker = '''
-        layout (lines) in;
-        layout (points, max_vertices = 8) out;
+    _vertShaderMarker = '''
+        in  float aData;
+        out float vTs;
+        out int   vID;
 
-        out float gPos;
+        uniform vec2  uPos;         // unit
+        uniform vec2  uSize;        // unit
+        uniform vec4  uMargin;      // pixels: l t r b
+        uniform vec2  uParentPos;   // pixels
+        uniform vec2  uParentSize;  // pixels
+        uniform vec2  uCanvasSize;  // pixels
+
+        uniform float uTs;
+        uniform float uTsRange;
+
+        void main() {
+            // transform inside parent
+            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
+            vec2 size = uSize * uParentSize / uCanvasSize;
+
+            // add margin
+            pos += uMargin.xw / uCanvasSize;
+            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
+
+            vTs = aData;
+            vID = gl_VertexID;
+
+            pos.x += (vTs / uTsRange - int(uTs / uTsRange)) * size.x;
+            pos.y += size.y / 2;
+
+            // ghost
+            if (0 <= vTs && int(vTs / uTsRange) + 1 == int(uTs / uTsRange))
+                pos.x += size.x;
+
+            // apply transformation to vertex and take to NDC space
+            gl_Position = vec4(pos * 2 - vec2(1), 0, 1);
+        }
+        '''
+
+    _geomShaderMarker = '''
+        layout (points) in;
+        layout (points, max_vertices = 1) out;
+
+        in  float vTs[];
+        in  int   vID[];
+
+        out float gTs;
+        flat out int   gID;
 
         uniform vec2  uPos;         // unit
         uniform vec2  uSize;        // unit
@@ -1586,65 +1629,20 @@ class EpochPlot(Plot, pypeline.Node):
         uniform float uTs;
         uniform float uTsRange;
 
-        void emitRectangle(vec4 pos0, vec4 pos1, vec2 pos, vec2 size) {
-            gl_Position = pos0;
-            gPos = ((pos0.x + 1) / 2 - pos.x) / size.x;
-            EmitVertex();
-
-            gl_Position = pos1;
-            gPos = ((pos1.x + 1) / 2 - pos.x) / size.x;
-            EmitVertex();
-
-            EndPrimitive();
-        }
-
         void main() {
-            // transform inside parent
-            vec2 pos = (uPos * uParentSize + uParentPos) / uCanvasSize;
-            vec2 size = uSize * uParentSize / uCanvasSize;
-
-            // add margin
-            pos += uMargin.xw / uCanvasSize;
-            size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
-
-            // left and right bounds (NDC)
-            float left = pos.x * 2 - 1;
-            float right = (pos.x + size.x) * 2 - 1;
-
-            float posTs = pos.x +
-                (uTs / uTsRange - int(uTs / uTsRange)) * size.x;
-            posTs = posTs * 2 - 1;
-
-            // main epoch
-            vec4 pos0 = gl_in[0].gl_Position;
-            vec4 pos1 = gl_in[1].gl_Position;
-
-            if (pos1.x <= posTs - size.x * 2) return;
-
-            if (pos1.x >= left) {
-                if (pos0.x < left) pos0.x = left;
-
-                emitRectangle(pos0, pos1, pos, size);
-            }
-
-            // ghost epoch
-            pos0 = gl_in[0].gl_Position;
-            pos1 = gl_in[1].gl_Position;
-
-            if (pos0.x < left) {
-                pos0.x += size.x * 2;
-                pos1.x += size.x * 2;
-
-                if (pos0.x < posTs) pos0.x = posTs;
-                if (right < pos1.x) pos1.x = right;
-
-                emitRectangle(pos0, pos1, pos, size);
+            if (max(0, uTs - uTsRange) <= vTs[0]) {
+                gl_Position = gl_in[0].gl_Position;
+                gTs  = vTs[0];
+                gID  = vID[0];
+                EmitVertex();
+                EndPrimitive();
             }
         }
         '''
 
     _fragShaderMarker = '''
-        in float gPos;
+        in float gTs;
+        flat in int   gID;
 
         out vec4 FragColor;
 
@@ -1657,6 +1655,7 @@ class EpochPlot(Plot, pypeline.Node):
         uniform float uPixelRatio;
         uniform vec4  uFgColor;
         uniform float uMarkerSize;
+        uniform int   uMarkerType[2];
 
         uniform float uTs;
         uniform float uTsRange;
@@ -1668,58 +1667,73 @@ class EpochPlot(Plot, pypeline.Node):
             float point2 = dot(point, point);   // square distance from origin
             float pxl = 2 / uMarkerSize;        // pixel size in NDC point coord
 
-            // full square
-            float a = 1;
-
-            // hollow square
-            //a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
-            //    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
-            //a = clamp(a, 0, 1);
-
-            // +
-            //a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
-            //    step(-pxl/2, point.x) - step(pxl/2, point.x);
-            //a = clamp(a, 0, 1);
-
-            // x
-            //a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-            //    smoothstep(0, pxl, abs(point.y) - abs(point.x));
-
-            // *
-            //a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
-            //    step(-pxl/2, point.x) - step(pxl/2, point.x) +
-            //    smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-            //    smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
-            //    step(point2, 1);
-            //a = clamp(a, 0, 1);
-
-            // full circle
-            // note: there's no performance difference with step vs smoothstep
-            float r0 = 1;
-            float r1 = 1 - 1 * pxl;
-            a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
-
-            // hollow circle
-            float r2 = 1 - 2 * pxl;
-            //a = smoothstep(r2 * r2, r1 * r1, point2) -
-            //    smoothstep(r1 * r1, r0 * r0, point2);
-
-            // down triangle
-            //a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
-
-            // up triangle
-            //a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
-
-            // left triangle
-            //a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
-
-            // right triangle
-            //a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+            switch (uMarkerType[gID % 2]) {
+            case 0:
+                // full square
+                float a = 1;
+                break;
+            case 1:
+                // hollow square
+                a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
+                    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
+                a = clamp(a, 0, 1);
+                break;
+            case 2:
+                // +
+                a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
+                    step(-pxl/2, point.x) - step(pxl/2, point.x);
+                a = clamp(a, 0, 1);
+                break;
+            case 3:
+                // x
+                a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+                    smoothstep(0, pxl, abs(point.y) - abs(point.x));
+                break;
+            case 4:
+                // *
+                a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
+                    step(-pxl/2, point.x) - step(pxl/2, point.x) +
+                    smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+                    smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
+                    step(point2, 1);
+                a = clamp(a, 0, 1);
+                break;
+            case 5:
+                // full circle
+                // note: there's no performance difference with step vs smoothstep
+                float r0 = 1;
+                float r1 = 1 - 1 * pxl;
+                a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
+                break;
+            default:
+            case 6:
+                // hollow circle
+                float r2 = 1 - 2 * pxl;
+                a = smoothstep(r2 * r2, r1 * r1, point2) -
+                    smoothstep(r1 * r1, r0 * r0, point2);
+                    break;
+            case 7:
+                // down triangle
+                a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
+                break;
+            case 8:
+                // up triangle
+                a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
+                break;
+            case 9:
+                // left triangle
+                a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
+                break;
+            case 10:
+                // right triangle
+                a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+                break;
+            }
 
             // apply oscilloscope cyclic fading effect
             FragColor = uFgColor;
 
-            float diff = gPos - (uTs / uTsRange - int(uTs / uTsRange));
+            float diff = (gTs - uTs) / uTsRange;
             float fade = 1;
             if (between(0, diff + 1, uFadeRange))
                 fade = (diff + 1) / uFadeRange;
@@ -1734,15 +1748,19 @@ class EpochPlot(Plot, pypeline.Node):
         '''
         Args:
             type (str): 'rect' or 'marker'
+            markerType (2 ints): Numbers between 0 and 10
         '''
 
         defaults = dict(label='', fontSize=10, fgColor=(0,0,1,.6),
-            type='rect', markerSize=6)
+            type='rect', markerType=[8, 7], markerSize=6)
 
         self._initProps(defaults, kwargs)
 
         if self.type not in ['rect', 'marker']:
             raise ValueError('`type` should be either "rect" or "marker"')
+        if not hasattr(self.markerType, '__len__') or len(self.markerType) != 2:
+            raise ValueError('`markerType` should be a list of size 2')
+        self.markerType = np.array(self.markerType, np.int)
 
         super().__init__(parent, **kwargs)
 
@@ -1750,7 +1768,7 @@ class EpochPlot(Plot, pypeline.Node):
         self._pointerWrite = 0     # pointer to last element written in _data
         self._pointerRead = 0      # pointer to last element read from _data
         self._partial = None
-        self._data = np.zeros(self._cacheSize, dtype=np.float32)
+        self._data = np.zeros(self._cacheSize, dtype=np.float32)-1
         self._pixelRatio = getPixelRatio()
         self._lock = threading.Lock()
 
@@ -1809,17 +1827,20 @@ class EpochPlot(Plot, pypeline.Node):
             markerSize=('uMarkerSize', '1f'))
 
         if self.type == 'rect':
-            self._prog = Program(vert=self._vertShader,
+            self._prog = Program(vert=self._vertShaderRect,
                 geom=self._geomShaderRect,
                 frag=self._fragShaderRect)
         else:
-            self._prog = Program(vert=self._vertShader,
+            self._prog = Program(vert=self._vertShaderMarker,
                 geom=self._geomShaderMarker,
                 frag=self._fragShaderMarker)
 
         with self._prog:
             for name, value in self._uProps.items():
+                print('>>>', name, value)
                 self._prog.setUniform(*value, self._props[name])
+            self._prog.setUniform('uMarkerType', '1iv',
+                (self.markerType.size, self.markerType))
             # high DPI display support
             self._prog.setUniform('uPixelRatio', '1f', getPixelRatio())
             self._prog.setUniform('uTsRange', '1f', self.figure.tsRange)
@@ -1869,9 +1890,11 @@ class EpochPlot(Plot, pypeline.Node):
 
             self._prog.setUniform('uTs', '1f', self.figure.ts)
 
-            if self.type == 'marker':
+            if self.type == 'rect':
+                glDrawArrays(GL_LINES, 0, self._data.size)
+            else:
                 glPointSize(self.markerSize * self._pixelRatio)
-            glDrawArrays(GL_LINES, 0, self._data.size)
+                glDrawArrays(GL_POINTS, 0, self._data.size)
 
         super().paintGL()
 
