@@ -7,14 +7,20 @@ Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
 Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
-# notes:
-# - GL color range is 0-1, Qt color range is 0-255
-# - Qt window dimensions are normalized by the device pixel ratio, i.e. a
-#   800x600 window looks almost the same on both low and high DPI screens.
-#   this causes an issue that texts drawn with QPainter without adjusting for
-#   pixel ratio will look pixelated on high DPI.
-# - OpenGL coordinates in fragment shader are actual screen pixel values and
-#   must be normalized manually if necessary. Look at getPixelRatio().
+'''
+Notes:
+- GL color range is 0-1, Qt color range is 0-255
+- Qt window dimensions are normalized by the device pixel ratio, i.e. a
+  800x600 window looks almost the same on both low and high DPI screens.
+  this causes an issue that texts drawn with QPainter without adjusting for
+  pixel ratio will look pixelated on high DPI.
+- OpenGL coordinates in fragment shader are actual screen pixel values and
+  must be normalized manually if necessary. Look at getPixelRatio().
+
+Marker types:
+  0  1  2  3  4  5  6  7  8  9  10
+  ◼  ◻  +  x  *  ●  ○  ▼  ▲  ◀  ▶
+'''
 
 import sys
 import math
@@ -39,10 +45,10 @@ import pypeline
 log = logging.getLogger(__name__)
 sizeFloat = sizeof(c_float)
 
-glVersion = (4, 1)
-glSamples = 0
-maxChannels = 128
-max3DTextureSize = 1024
+GL_VERSION = (4, 1)
+GL_SAMPLES = 0
+MAX_CHANNELS = 128
+MAX_3D_TEXTURE_SIZE = 1024
 
 
 defaultColors = np.array([
@@ -85,13 +91,13 @@ def getPixelRatio():
 
 def setSurfaceFormat():
     '''Set Qt surface format: samples, profile and version.
-    Setting surface format before running Qt application is mandotary in macOS.
+    On macOS surface format must be set before running a Qt application.
     '''
     surfaceFormat = QtGui.QSurfaceFormat()
-    surfaceFormat.setSamples(glSamples)
+    surfaceFormat.setSamples(GL_SAMPLES)
     surfaceFormat.setProfile(QtGui.QSurfaceFormat.CoreProfile)
-    surfaceFormat.setMajorVersion(glVersion[0])
-    surfaceFormat.setMinorVersion(glVersion[1])
+    surfaceFormat.setMajorVersion(GL_VERSION[0])
+    surfaceFormat.setMinorVersion(GL_VERSION[1])
     QtGui.QSurfaceFormat.setDefaultFormat(surfaceFormat)
 
 
@@ -99,6 +105,8 @@ class Program:
     '''OpenGL shader program.'''
 
     _helperFunctions = '''
+        const float PI = 3.14159265359;
+
         vec2 transform(vec2 p, vec2 a, vec2 b) {
             return a*p + b;
         }
@@ -120,14 +128,88 @@ class Program:
         }
 
         float sinFade(float fade) {
-            return sin((fade*2-1)*3.1415/2)/2+.5;
+            return sin((fade*2 - 1) * PI/2) / 2 + .5;
+        }
+        '''
+
+    _markerFunction = '''
+        float markerAlpha(vec2 point, float size, int type) {
+            // NDC point coordinate (-1 to +1)
+            point = 2 * (point - .5);
+            float point2 = dot(point, point);   // square distance from origin
+            float pxl = 2 / size;               // pixel size in NDC point coord
+            float a = 1;
+
+            switch (type) {
+                case 0:    // full square
+                    a = 1;
+                    break;
+
+                case 1:    // hollow square
+                    a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
+                        step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
+                    a = clamp(a, 0, 1);
+                    break;
+
+                case 2:    // +
+                    a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
+                        step(-pxl/2, point.x) - step(pxl/2, point.x);
+                    a = clamp(a, 0, 1);
+                    break;
+
+                case 3:    // x
+                    a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+                        smoothstep(0, pxl, abs(point.y) - abs(point.x));
+                    break;
+
+                case 4:    // *
+                    a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
+                        step(-pxl/2, point.x) - step(pxl/2, point.x) +
+                        smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
+                        smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
+                        step(point2, 1);
+                    a = clamp(a, 0, 1);
+                    break;
+
+                default:
+                case 5:    // full circle
+                    // note: no performance difference with step vs smoothstep
+                    float r0 = 1;
+                    float r1 = 1 - 1 * pxl;
+                    a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
+                    break;
+
+                case 6:    // hollow circle
+                    float r2 = 1 - 2 * pxl;
+                    a = smoothstep(r2 * r2, r1 * r1, point2) -
+                        smoothstep(r1 * r1, r0 * r0, point2);
+                    break;
+
+                case 7:    // down triangle
+                    a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
+                    break;
+
+                case 8:    // up triangle
+                    a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
+                    break;
+
+                case 9:    // left triangle
+                    a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
+                    break;
+
+                case 10:    // right triangle
+                    a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+                    break;
+            }
+
+            return a;
         }
         '''
 
     @classmethod
     def createShader(cls, shaderType, source):
         """Compile a shader."""
-        source = ('#version %d%d0 core\n' % glVersion) + \
+        source = ('#version %d%d0 core\n' % GL_VERSION) + \
             cls._helperFunctions + source
         shader = glCreateShader(shaderType)
         glShaderSource(shader, source)
@@ -1130,7 +1212,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
             vChannel = channel;
         }
         ''' \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
+        .replace('{MAX_CHANNELS}', str(MAX_CHANNELS))
 
     _fragShader2 = '''
         in float vChannel;
@@ -1144,7 +1226,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
             FragColor = uColor[int(vChannel) % uColorCount];
         }
         ''' \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
+        .replace('{MAX_CHANNELS}', str(MAX_CHANNELS))
 
     def __init__(self, parent, **kwargs):
         '''
@@ -1188,9 +1270,9 @@ class AnalogPlot(Plot, pypeline.Sampled):
             raise ValueError('`fgColor` has to be 1D or 2D')
         if self.fgColor.shape[1] != 4:
             raise ValueError('`fgColor` needs for color components (RGBA)')
-        if self.fgColor.shape[0] > maxChannels:
+        if self.fgColor.shape[0] > MAX_CHANNELS:
             raise ValueError('`fgColor` can\'t have more than %d colors' %
-                maxChannels)
+                MAX_CHANNELS)
 
         super().__init__(parent, **kwargs)
 
@@ -1211,8 +1293,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
     def _configuring(self, params, sinkParams):
         super()._configuring(params, sinkParams)
 
-        if params['channels'] > maxChannels:
-            raise ValueError('Channel count cannot exceed %d' % maxChannels)
+        if params['channels'] > MAX_CHANNELS:
+            raise ValueError('Channel count cannot exceed %d' % MAX_CHANNELS)
         if not callable(self.ypos) and params['channels'] != len(self.ypos):
             raise ValueError('Size of `ypos` must match number of `channels`')
         if not callable(self.ysize) and params['channels'] != len(self.ysize):
@@ -1640,7 +1722,7 @@ class EpochPlot(Plot, pypeline.Node):
         }
         '''
 
-    _fragShaderMarker = '''
+    _fragShaderMarker = Program._markerFunction + '''
         in float gTs;
         flat in int   gID;
 
@@ -1662,97 +1744,36 @@ class EpochPlot(Plot, pypeline.Node):
         uniform float uFadeRange;  // unit
 
         void main() {
-            // NDC point coordinate (-1 to +1)
-            vec2 point = 2 * (gl_PointCoord - .5);
-            float point2 = dot(point, point);   // square distance from origin
-            float pxl = 2 / uMarkerSize;        // pixel size in NDC point coord
-
-            switch (uMarkerType[gID % 2]) {
-            case 0:
-                // full square
-                float a = 1;
-                break;
-            case 1:
-                // hollow square
-                a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
-                    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
-                a = clamp(a, 0, 1);
-                break;
-            case 2:
-                // +
-                a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
-                    step(-pxl/2, point.x) - step(pxl/2, point.x);
-                a = clamp(a, 0, 1);
-                break;
-            case 3:
-                // x
-                a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-                    smoothstep(0, pxl, abs(point.y) - abs(point.x));
-                break;
-            case 4:
-                // *
-                a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
-                    step(-pxl/2, point.x) - step(pxl/2, point.x) +
-                    smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-                    smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
-                    step(point2, 1);
-                a = clamp(a, 0, 1);
-                break;
-            case 5:
-                // full circle
-                // note: there's no performance difference with step vs smoothstep
-                float r0 = 1;
-                float r1 = 1 - 1 * pxl;
-                a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
-                break;
-            default:
-            case 6:
-                // hollow circle
-                float r2 = 1 - 2 * pxl;
-                a = smoothstep(r2 * r2, r1 * r1, point2) -
-                    smoothstep(r1 * r1, r0 * r0, point2);
-                    break;
-            case 7:
-                // down triangle
-                a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
-                break;
-            case 8:
-                // up triangle
-                a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
-                break;
-            case 9:
-                // left triangle
-                a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
-                break;
-            case 10:
-                // right triangle
-                a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
-                break;
-            }
+            // apply marker alpha mask
+            float alpha = markerAlpha(gl_PointCoord, uMarkerSize,
+                uMarkerType[gID % 2]);
 
             // apply oscilloscope cyclic fading effect
-            FragColor = uFgColor;
-
             float diff = (gTs - uTs) / uTsRange;
-            float fade = 1;
-            if (between(0, diff + 1, uFadeRange))
-                fade = (diff + 1) / uFadeRange;
-            else if (between(0, diff, uFadeRange))
-                fade = diff / uFadeRange;
+            float fade = between(0, diff+1, uFadeRange) ? diff / uFadeRange : 1;
             fade = sinFade(fade);
-            FragColor.a *= fade * a;
+
+            FragColor = uFgColor;
+            FragColor.a *= alpha * fade;
         }
         '''
 
     def __init__(self, parent, **kwargs):
         '''
         Args:
+            label (str)
+            fontSize (int)
+            fgColor (4 floats)
             type (str): 'rect' or 'marker'
-            markerType (2 ints): Numbers between 0 and 10
+            markerType (2 ints): Epoch start and stop marker when type='marker'
+                0  1  2  3  4  5  6  7  8  9  10
+                ◼  ◻  +  x  *  ●  ○  ▼  ▲  ◀  ▶
+                Defaults to [8, 7]: [▲, ▼]
+            markerSize (float): in pixels
         '''
 
         defaults = dict(label='', fontSize=10, fgColor=(0,0,1,.6),
-            type='rect', markerType=[8, 7], markerSize=6)
+            type='rect', markerType=[8, 7], markerSize=7)
 
         self._initProps(defaults, kwargs)
 
@@ -1760,7 +1781,7 @@ class EpochPlot(Plot, pypeline.Node):
             raise ValueError('`type` should be either "rect" or "marker"')
         if not hasattr(self.markerType, '__len__') or len(self.markerType) != 2:
             raise ValueError('`markerType` should be a list of size 2')
-        self.markerType = np.array(self.markerType, np.int)
+        self._props['markerType'] = np.array(self.markerType, np.int)
 
         super().__init__(parent, **kwargs)
 
@@ -1773,7 +1794,7 @@ class EpochPlot(Plot, pypeline.Node):
         self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
-        if name in {'label', 'fontSize', 'fgColor'}:
+        if name in {'label', 'fontSize', 'fgColor', 'marker', 'markerType'}:
             raise AttributeError('Cannot set attribute')
 
         super().__setattr__(name, value)
@@ -1837,7 +1858,6 @@ class EpochPlot(Plot, pypeline.Node):
 
         with self._prog:
             for name, value in self._uProps.items():
-                print('>>>', name, value)
                 self._prog.setUniform(*value, self._props[name])
             self._prog.setUniform('uMarkerType', '1iv',
                 (self.markerType.size, self.markerType))
@@ -2141,7 +2161,7 @@ class SpikeOverlay(Plot, pypeline.Node):
         }
         '''
 
-    _fragShader = '''
+    _fragShader = Program._markerFunction + '''
         in vec2 vVertex;
 
         out vec4 FragColor;
@@ -2154,66 +2174,16 @@ class SpikeOverlay(Plot, pypeline.Node):
         uniform float uFadeRange;
 
         void main() {
-            // NDC point coordinate (-1 to +1)
-            vec2 point = 2 * (gl_PointCoord - .5);
-            float point2 = dot(point, point);   // square distance from origin
-            float pxl = 2 / uMarkerSize;        // pixel size in NDC point coord
-
-            // full square
-            float a = 1;
-
-            // hollow square
-            //a = step(1 - pxl, abs(point.y)) - step(1, abs(point.y)) +
-            //    step(1 - pxl, abs(point.x)) - step(1, abs(point.x));
-            //a = clamp(a, 0, 1);
-
-            // +
-            //a = step(-pxl/2, point.y) - step(pxl/2, point.y) +
-            //    step(-pxl/2, point.x) - step(pxl/2, point.x);
-            //a = clamp(a, 0, 1);
-
-            // x
-            //a = smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-            //    smoothstep(0, pxl, abs(point.y) - abs(point.x));
-
-            // *
-            //a = (step(-pxl/2, point.y) - step(pxl/2, point.y) +
-            //    step(-pxl/2, point.x) - step(pxl/2, point.x) +
-            //    smoothstep(-pxl, 0, abs(point.y) - abs(point.x)) -
-            //    smoothstep(0, pxl, abs(point.y) - abs(point.x))) *
-            //    step(point2, 1);
-            //a = clamp(a, 0, 1);
-
-            // full circle
-            // note: there's no performance difference with step vs smoothstep
-            float r0 = 1;
-            float r1 = 1 - 1 * pxl;
-            a = 1 - smoothstep(r1 * r1, r0 * r0, point2);
-
-            // hollow circle
-            float r2 = 1 - 2 * pxl;
-            //a = smoothstep(r2 * r2, r1 * r1, point2) -
-            //    smoothstep(r1 * r1, r0 * r0, point2);
-
-            // down triangle
-            //a = 1 - smoothstep(-pxl, 0, point.y + abs(point.x * 2) - 1);
-
-            // up triangle
-            //a = smoothstep(0, pxl, point.y - abs(point.x * 2) + 1);
-
-            // left triangle
-            //a = smoothstep(0, pxl, point.x - abs(point.y * 2) + 1);
-
-            // right triangle
-            //a = 1 - smoothstep(-pxl, 0, point.x + abs(point.y * 2) - 1);
+            // apply marker alpha mask (5: full circle)
+            float alpha = markerAlpha(gl_PointCoord, uMarkerSize, 5);
 
             // apply oscilloscope cyclic fading effect
             float diff = (vVertex.x - uTs + uTsRange) / uTsRange;
             float fade = between(0, diff, uFadeRange) ? diff / uFadeRange : 1;
             fade = sinFade(fade);
-            a *= fade;
 
-            FragColor = uFgColor * vec4(1, 1, 1, a);
+            FragColor = uFgColor;
+            FragColor.a *= alpha * fade;
         }
         '''
 
@@ -2473,7 +2443,7 @@ class SpikeFigure(Figure, pypeline.Node):
             gl_Position = vec4(vertex, 0, 1);
         }
         ''' \
-        .replace('{MAX_CHANNELS}', str(maxChannels))
+        .replace('{MAX_CHANNELS}', str(MAX_CHANNELS))
 
     _fragShader = '''
         in float vSpikeIndex;
@@ -2513,7 +2483,7 @@ class SpikeFigure(Figure, pypeline.Node):
                 uSpikeCount) / uSpikeCount;
         }
         ''' \
-        .replace('{MAX_CHANNELS}', str(maxChannels)) \
+        .replace('{MAX_CHANNELS}', str(MAX_CHANNELS)) \
         .replace('{MAX_COLORS}', str(len(defaultColors)))
 
     def __init__(self, parent, **kwargs):
@@ -2841,10 +2811,10 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         # glEnable(GL_MULTISAMPLE)
         # glShadeModel(GL_SMOOTH)
 
-        print('OpenGL Version: %d.%d' % glVersion)
+        print('OpenGL Version: %d.%d' % GL_VERSION)
         print('Device Pixel Ratio:',
             QtWidgets.QApplication.screens()[0].devicePixelRatio())
-        print('MSAA: x%d' % glSamples)
+        print('MSAA: x%d' % GL_SAMPLES)
         print('Max Texture Size: %dx%d' % (
             glGetIntegerv(GL_MAX_RECTANGLE_TEXTURE_SIZE),
             glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE)
