@@ -102,7 +102,13 @@ def setSurfaceFormat():
 
 
 class Program:
-    '''OpenGL shader program.'''
+    '''OpenGL shader program.
+
+    Contex manager for binding and unbinding the GL program and its VAO.
+    Convenience methods for modifying uniforms, VBOs and an EBO.
+    Helper functions in GLSL such as 2D transformation, random number
+    generation, sinusoidal ramp function, and marker symbol generation.
+    '''
 
     _helperFunctions = '''
         const float PI = 3.14159265359;
@@ -222,6 +228,15 @@ class Program:
 
     def __init__(self, vert=None, tesc=None, tese=None, geom=None, frag=None,
             comp=None):
+        '''
+        Args:
+            vert (str): Vertex shader code (required).
+            tesc (str): Tesselation control shader code (optional).
+            tese (str): Tesselation evaluation shader code (optional).
+            geom (str): Geometry shader code (optional).
+            frag (str): Framgent shader code (mandatory).
+            comp (str): Compute shader code. Can't be used with other shader.
+        '''
 
         if (vert or tesc or tese or geom or frag) and not (vert and frag):
             raise ValueError('Require both vertex and fragment shaders')
@@ -318,7 +333,7 @@ class Program:
 
 
 class Item:
-    '''Graphical item capable of containing child items.'''
+    '''Base graphical item capable of containing child items.'''
 
     @property
     def canvas(self):
@@ -330,12 +345,12 @@ class Item:
     def __init__(self, parent, **kwargs):
         '''
         Args:
-            parent
-            pos (2 floats): Item position in unit parent space (x, y).
-            size (2 floats): Item size in unit parent space (w, h).
+            parent (Item): Has to be another graphical item.
+            pos (2 floats): Item position in unit (0-1) parent space (x, y).
+            size (2 floats): Item size in unit (0-1) parent space (w, h).
             margin (4 floats): Margin in pixels (l, t, r, b).
-            bgColor (3 floats): Backgoround color.
-            fgColor (3 floats): Foreground color for border and texts.
+            bgColor (4 floats): Backgoround color. RGBA 0-1.
+            fgColor (4 floats): Foreground color for border and texts. RGBA 0-1.
         '''
 
         # properties with their default values
@@ -356,8 +371,9 @@ class Item:
             self.parent.addItem(self)
 
     def _initProps(self, defaults, kwargs):
-        # initialize properties with the given or default values
-        # setter monitoring (refreshing, etc) won't apply here
+        ''' Initialize properties with the given or default values.
+        Setter monitoring (refreshing, etc) won't apply here.
+        '''
         if not hasattr(self, '_props'):
             self._props = dict()
 
@@ -1012,6 +1028,8 @@ class Rectangle(Item):
 
 
 class Grid(Rectangle):
+    '''A grid of solid or dashed horizontal and vertical lines.'''
+
     MAX_TICKS = 100
 
     _fragShader = '''
@@ -1827,6 +1845,9 @@ class EpochPlot(Plot, pypeline.Node):
         return data
 
     def _written(self, data, source):
+        # keep original data for passing down to sinks
+        dataSink = data.copy()
+
         with self._lock:
             # when last added epoch has been partial, complete the epoch by
             # adding its start timestamp to the beginning of current data, and
@@ -1851,7 +1872,8 @@ class EpochPlot(Plot, pypeline.Node):
 
             self._pointerWrite += len(data)
 
-        super()._written(data, source)
+        # pass the original data to sinks
+        super()._written(dataSink, source)
 
     def initializeGL(self):
         # properties linked with a uniform variable in the shader
@@ -1881,7 +1903,7 @@ class EpochPlot(Plot, pypeline.Node):
             self._prog.setVBO('aData', GL_FLOAT, 1, self._data, GL_DYNAMIC_DRAW)
 
         self.figure.addYLabel(self.label, self.pos[1] + self.size[1] * .5,
-            self.fgColor, self.fontSize)
+            self.labelColor, self.fontSize)
 
         super().initializeGL()
 
@@ -2650,6 +2672,9 @@ class SpikeFigure(Figure, pypeline.Node):
 
 
 class Scope(Figure, pypeline.Sampled):
+    '''Time-based plotting figure with oscilloscope-style cycling fading effect.
+    '''
+
     class XLabels(TextArray):
         _fragShader = '''
             in vec2  gPos;
@@ -2769,11 +2794,23 @@ class Scope(Figure, pypeline.Sampled):
 
 
 class Canvas(Item, QtWidgets.QOpenGLWidget):
+    '''Main Qt widget for drawing all graphical Items.'''
+
     @property
     def canvas(self):
         return self
 
+    @property
+    def fps(self):
+        return self._fps
+
     def __init__(self, parent, **kwargs):
+        '''
+        Args:
+            bgColor (4 floats): Background color of the canvas and its childs
+                in RGBA 0-1 format. Defaults to white: (1,1,1,1).
+        '''
+
         # properties with their default values
         defaults = dict(bgColor=(1,1,1,1))
 
@@ -2813,6 +2850,8 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         self._stats.text = stats
 
     def initializeGL(self):
+        log.info('Initializing OpenGL Canvas')
+
         glEnable(GL_BLEND)
         # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
@@ -2823,11 +2862,10 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         # glEnable(GL_MULTISAMPLE)
         # glShadeModel(GL_SMOOTH)
 
-        print('OpenGL Version: %d.%d' % GL_VERSION)
-        print('Device Pixel Ratio:',
-            QtWidgets.QApplication.screens()[0].devicePixelRatio())
-        print('MSAA: x%d' % GL_SAMPLES)
-        print('Max Texture Size: %dx%d' % (
+        log.info('OpenGL Version: %d.%d' % GL_VERSION)
+        log.info('Device Pixel Ratio: %d' % getPixelRatio())
+        log.info('MSAA: x%d' % GL_SAMPLES)
+        log.info('Max Texture Size: %dx%d' % (
             glGetIntegerv(GL_MAX_RECTANGLE_TEXTURE_SIZE),
             glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE)
             ))
@@ -2862,7 +2900,9 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
         if len(self._drawDurations)>180: self._drawDurations.pop(0)
 
 
-class MainWindow(QtWidgets.QWidget):
+class DemoWindow(QtWidgets.QWidget):
+    '''A simulated demo of GPU-accelerated plotting.'''
+
     def __init__(self):
         super().__init__()
 
@@ -2887,8 +2927,8 @@ class MainWindow(QtWidgets.QWidget):
         self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
         self.targetPlot = EpochPlot(self.scope, pos=(0,.05), size=(1,.05),
             label='Target', fgColor=(0,1,0,.6))
-        self.pumpPlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
-            label='Pump', fgColor=(0,0,1,1), type='marker')
+        self.pokePlot = EpochPlot(self.scope, pos=(0,0), size=(1,.05),
+            label='Poke', fgColor=(0,0,1,1), type='marker')
 
         self.spikeCont = Item(self.canvas, pos=(.7,0), size=(.3,1),
             margin=(0,20,10,10))
@@ -2908,7 +2948,7 @@ class MainWindow(QtWidgets.QWidget):
         # self.spikeFigure = SpikeFigure(self.canvas, pos=(.7,0), size=(.3,1),
         #    margin=(0,20,10,10))
 
-        self.generator = pypeline.SpikeGenerator(fs=self.fs,
+        self.generator  = pypeline.SpikeGenerator(fs=self.fs,
             channels=self.channels)
         self.filter     = pypeline.LFilter(fl=100, fh=6000)
         self.grandAvg   = pypeline.GrandAverage()
@@ -2956,7 +2996,7 @@ class MainWindow(QtWidgets.QWidget):
         elif event.key() == QtCore.Qt.Key_T:
             self.targetPlot.write(self.generator.ts)
         elif event.key() == QtCore.Qt.Key_P:
-            self.pumpPlot.write(self.generator.ts)
+            self.pokePlot.write(self.generator.ts)
         elif event.key() == QtCore.Qt.Key_Up:
             self.scaleStep += 1
         elif event.key() == QtCore.Qt.Key_Down:
@@ -2981,7 +3021,7 @@ if __name__ == '__main__':
     app.setApplicationName = config.APP_NAME
     app.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
-    window = MainWindow()
-    window.show()
+    demo = DemoWindow()
+    demo.show()
 
     app.exec_()
