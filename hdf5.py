@@ -12,6 +12,7 @@ import logging
 import functools
 import threading
 # import multiprocessing
+import numpy           as np
 import tables          as tb
 
 import pypeline
@@ -198,12 +199,68 @@ class AnalogStorage(pypeline.Sampled):
             expectedrows=self._fs*60*30)    # 30 minutes
         setNodeAttr(self._hdf5Node, 'fs', self._fs)
 
+    def _written(self, data, source):
+        appendArray(self._hdf5Node, data.transpose())
+        super()._written(data, source)
+
+
+class EpochStorage(pypeline.Node):
+    def __init__(self, hdf5Node, compLib='zlib', compLevel=1, expectedRows=300,
+            **kwargs):
+        '''
+        Args:
+            hdf5Node (str): Path of the node to store data in HDF5 file.
+            compLib (str): Compression library, should be one of the following:
+                zlib, lzo, bzip2, blosc, blosc:blosclz, blosc:lz4,
+                blosc:lz4hc, blosc:snappy, blosc:zlib, blosc:zstd
+            compLevel: Level of compression can vary from 0 (no compression)
+                to 9 (maximum compression)
+        '''
+        if not isinstance(hdf5Node, str):
+            raise TypeError('`hdf5Node` should be a string')
+        if contains(hdf5Node):
+            raise NameError('HDF5 node %s already exists' % hdf5Node)
+
+        self._hdf5Node    = hdf5Node
+        self._hdf5Filters = tb.Filters(complib=compLib, complevel=compLevel)
+        self._lock        = threading.Lock()
+        self._partial     = None
+
+        createEArray(hdf5Node, tb.Float64Atom(), (0,2), '',
+            self._hdf5Filters, expectedrows=expectedRows)
+
+        super().__init__(**kwargs)
+
     def _writing(self, data, source):
         data = super()._writing(data, source)
 
-        appendArray(self._hdf5Node, data.transpose())
+        if not isinstance(data, np.ndarray): data = np.array(data)
+        if data.ndim == 0: data = data[np.newaxis]
+        if data.ndim != 1: raise ValueError('`data` should be 1D')
 
         return data
+
+    def _written(self, data, source):
+        # keep original data for passing down to sinks
+        dataSink = data.copy()
+
+        with self._lock:
+            # add last partial epoch to beginning of new data
+            if self._partial is not None:
+                data = np.r_[self._partial, data]
+                self._partial = None
+
+            # keep new partial epoch for next write
+            if len(data) % 2:
+                self._partial = data[-1]
+                data = data[:-1]
+
+            # dump epochs to file
+            if self._hdf5Node is not None:
+                appendArray(self._hdf5Node, data.reshape(-1, 2))
+
+        # pass the original data to sinks
+        super()._written(dataSink, source)
 
 
 if __name__ == '__main__':
