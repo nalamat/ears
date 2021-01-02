@@ -1133,6 +1133,8 @@ class Plot(Item):
 
 
 class AnalogPlot(Plot, pypeline.Sampled):
+    '''Multi-channel analog plot for Scope.'''
+
     _vertShader = '''
         in vec2 aVertex;
 
@@ -1231,9 +1233,11 @@ class AnalogPlot(Plot, pypeline.Sampled):
     def __init__(self, parent, **kwargs):
         '''
         Args:
-            label (n strs)
-            ypos (func or n ints): Traces are evenly spaced by default.
-            fontSize (int)
+            label (n strs): Labels to be added to the left side of the Scope.
+            ypos (func or n floats): By default traces are evenly spaced.
+            ysize (func or 1 or n floats): By defaults traces do not overlap
+                within +/- 1.
+            fontSize (int): Font size for labels.
             fgColor (nx4 floats): RGBA 0-1.
         '''
 
@@ -1297,7 +1301,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
             raise ValueError('Channel count cannot exceed %d' % MAX_CHANNELS)
         if not callable(self.ypos) and params['channels'] != len(self.ypos):
             raise ValueError('Size of `ypos` must match number of `channels`')
-        if not callable(self.ysize) and params['channels'] != len(self.ysize):
+        if not callable(self.ysize) and (len(self.ysize) != 1 or
+                params['channels'] != len(self.ysize)):
             raise ValueError('Size of `ysize` must match number of `channels`')
 
     def _configured(self, params, sinkParams):
@@ -1312,6 +1317,9 @@ class AnalogPlot(Plot, pypeline.Sampled):
             self.ysize = [self.ysize(ch, self.channels)
                 for ch in range(self.channels)]
             self.ysize = np.array(self.ysize, dtype=np.float32)
+
+        if len(self.ysize) == 1:
+            self.ysize = np.repeat(self.ysize, self.channels)
 
         self._nsRange = int(np.ceil(self.figure.tsRange * self.fs))
 
