@@ -217,6 +217,12 @@ class DigitalInput(BaseTask, pypeline.Node):
                 raise ValueError('When specified, length of `lineNames` '
                     'should match the actual number of `lines`')
 
+    def _configuring(self, params, sinkParams):
+        super()._configuring(params, sinkParams)
+
+        if not self._getTs:
+            raise ValueError('Can\'t use in pypeline without a getTS function')
+
     def _start(self):
         self._lastData = np.full(self.lineCount, self._initialState,
             dtype=np.uint8)
@@ -242,8 +248,7 @@ class DigitalInput(BaseTask, pypeline.Node):
 
                 for i in range(len(data)):
                     if data[i] != self._lastData[i]:
-                        name = self.lineNames[i] if self.lineNames \
-                            else i
+                        name = self.lineNames[i] if self.lineNames else i
                         edge = 'rising' if data[i] else 'falling'
 
                         if ts is None:
@@ -254,8 +259,12 @@ class DigitalInput(BaseTask, pypeline.Node):
                             log.debug('%s task detected %s edge on %s at '
                                 '%.3f', self.name, edge, name, ts)
                             self.edgeDetected(self, name, edge, ts)
-                            # pass data down into the pipeline
-                            pypeline.Node.write(self, data)
+
+                # pass data down into the pipeline
+                # timestamp for the changed lines, an empty list for others
+                data2 = [ts if data[i] != self._lastData[i] else []
+                    for i in range(len(data))]
+                pypeline.Node.write(self, data2)
 
                 self._lastData = data
                 return 0
@@ -626,10 +635,10 @@ class AnalogInput(BaseAnalog, pypeline.Sampled):
             self._simInterval = dataChunk
 
     def _start(self):
-        if self._samples==np.inf and not self.dataAcquired:
-            raise ValueError('Before starting %s task in infinite samples '
-                'mode, a callback must be specified for `dataNeeded` event' %
-                self.name)
+        # if self._samples==np.inf and not self.dataAcquired:
+        #     raise ValueError('Before starting %s task in infinite samples '
+        #         'mode, a callback must be specified for `dataAcquired` event' %
+        #         self.name)
 
         super()._start()
 
@@ -694,7 +703,8 @@ class AnalogInput(BaseAnalog, pypeline.Sampled):
     def _callDataAcquired(self):
         data = self._read()
         # pass data to all registered callbacks
-        self.dataAcquired(self, data)
+        if self.dataAcquired:
+            self.dataAcquired(self, data)
         # pass data down into the pipeline
         pypeline.Sampled.write(self, data)
 
@@ -1054,6 +1064,19 @@ if __name__ == '__main__':
         logging.basicConfig(format='[%(asctime)s.%(msecs)03d, %(module)s, '
             '%(funcName)s, %(levelname)s] %(message)s', level=logging.DEBUG,
             datefmt='%Y/%m/%d-%H:%M:%S')
+
+        # # finite samples
+        # analogInput = AnalogInput('/dev1/ai0', fs=1000, samples=1000)
+        # analogInput.start()
+        # analogInput.wait()
+        # data = analogInput.read()
+        #
+        # # infinite samples
+        # def process(data):
+        #     plot(data)
+        #
+        # analogInput2 = AnalogInput('/dev1/ai0', fs=1000, samples=np.inf, dataAqcuired=process)
+        # analogInput2.start()
 
         if len(sys.argv) > 1 and sys.argv[1]=='dig':
             input = DigitalInput('/dev3/port0/line0:1',
