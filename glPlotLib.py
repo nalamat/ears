@@ -1769,19 +1769,20 @@ class EpochPlot(Plot, pypeline.Node):
     def __init__(self, parent, **kwargs):
         '''
         Args:
-            label (str)
-            fontSize (int)
-            fgColor (4 floats)
-            type (str): 'rect' or 'marker'
-            markerType (2 ints): Epoch start and stop marker when type='marker'
+            label (str): Label to be added to left side of the scope.
+            fontSize (int): For the label. Defaults to 10.
+            fgColor (4 floats): Defaults to transparent blue: (0,0,1,.6).
+            labelColor (4 floats): Defaults to fgColor with a=1.
+            type (str): 'rect' or 'marker'.
+            markerType (2 ints): Epoch start and stop markers if type='marker'.
                 0  1  2  3  4  5  6  7  8  9  10
                 ◼  ◻  +  x  *  ●  ○  ▼  ▲  ◀  ▶
-                Defaults to [8, 7]: [▲, ▼]
-            markerSize (float): in pixels
+                Defaults to [8, 7]: [▲, ▼].
+            markerSize (float): In pixels.
         '''
 
         defaults = dict(label='', fontSize=10, fgColor=(0,0,1,.6),
-            type='rect', markerType=[8, 7], markerSize=7)
+            labelColor=None, type='rect', markerType=[8, 7], markerSize=7)
 
         self._initProps(defaults, kwargs)
 
@@ -1790,6 +1791,8 @@ class EpochPlot(Plot, pypeline.Node):
         if not hasattr(self.markerType, '__len__') or len(self.markerType) != 2:
             raise ValueError('`markerType` should be a list of size 2')
         self._props['markerType'] = np.array(self.markerType, np.int)
+        if self.labelColor is None:
+            self._props['labelColor'] = np.r_[self.fgColor[:-1],1]
 
         super().__init__(parent, **kwargs)
 
@@ -1802,7 +1805,8 @@ class EpochPlot(Plot, pypeline.Node):
         self._lock = threading.Lock()
 
     def __setattr__(self, name, value):
-        if name in {'label', 'fontSize', 'fgColor', 'marker', 'markerType'}:
+        if name in {'label', 'fontSize', 'fgColor', 'labelColor',
+                'marker', 'markerType'}:
             raise AttributeError('Cannot set attribute')
 
         super().__setattr__(name, value)
