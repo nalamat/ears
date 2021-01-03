@@ -1441,7 +1441,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
         # wrap around
         if ns1 >= ns2:
             self.refresh(ns1, self._nsRange)
-            self.refresh(0, ns2)
+            if ns2: self.refresh(0, ns2)
             return
 
         sizePxl = (self.sizePxl * getPixelRatio()).astype(np.int32)
@@ -1488,7 +1488,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
         # wrap around
         if ns1 >= ns2:
             self._subVBO(ns1, self._nsRange, data[:, :self._nsRange-ns1])
-            self._subVBO(0, ns2, data[:, self._nsRange-ns1:])
+            if ns2: self._subVBO(0, ns2, data[:, self._nsRange-ns1:])
             return
 
         # transfer samples to GPU channel by channel
@@ -1912,13 +1912,10 @@ class EpochPlot(Plot, pypeline.Node):
 
     def _subVBO(self, frm, to, data):
         '''Update a subregion of VBO'''
-        # nothing to update
-        if frm == to:
-            return
         # wrap around
-        if frm > to:
+        if frm >= to:
             self._subVBO(frm, len(data), data)
-            self._subVBO(0, to, data)
+            if to: self._subVBO(0, to, data)
             return
 
         self._prog.subVBO('aData', frm * sizeFloat, data[frm:to])
@@ -2115,13 +2112,10 @@ class SpikePlot(Plot, pypeline.Node):
 
     def _subVBO(self, frm, to, data):
         '''Update a subregion of VBO'''
-        # nothing to update
-        if frm == to:
-            return
         # wrap around
-        if frm > to:
+        if frm >= to:
             self._subVBO(frm, self._spikeCount, data)
-            self._subVBO(0, to, data)
+            if to: self._subVBO(0, to, data)
             return
 
         self._prog.subVBO('aData', frm * self._spikeLength * sizeFloat,
@@ -2629,13 +2623,10 @@ class SpikeFigure(Figure, pypeline.Node):
 
     def _subVBO(self, ch, frm, to, data):
         '''Update a subregion of VBO'''
-        # nothing to update
-        if frm == to:
-            return
         # wrap around
         if frm > to:
             self._subVBO(ch, frm, self._spikeCount, data)
-            self._subVBO(ch, 0, to, data)
+            if to: self._subVBO(ch, 0, to, data)
             return
 
         self._prog.subVBO('aData', (ch * self._spikeCount + frm) *
