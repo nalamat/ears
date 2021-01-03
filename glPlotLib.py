@@ -1342,7 +1342,7 @@ class AnalogPlot(Plot, pypeline.Sampled):
         self._nsRange = int(np.ceil(self.figure.tsRange * self.fs))
 
         self._buffer = misc.CircularBuffer((self.channels, self._nsRange),
-            dtype=np.float32)
+            dtype=np.float32, allowOverflow=True)
 
     def _written(self, data, source):
         with self._buffer:
@@ -1438,10 +1438,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
         if ns1 is None: ns1 = 0
         if ns2 is None: ns2 = self._nsRange
 
-        if ns1 == ns2:
-            return
         # wrap around
-        if ns1 > ns2:
+        if ns1 >= ns2:
             self.refresh(ns1, self._nsRange)
             self.refresh(0, ns2)
             return
@@ -1487,11 +1485,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
     def _subVBO(self, ns1, ns2, data):
         '''Update a subregion of VBO'''
-        # nothing to update
-        if ns1 == ns2:
-            return
         # wrap around
-        if ns1 > ns2:
+        if ns1 >= ns2:
             self._subVBO(ns1, self._nsRange, data[:, :self._nsRange-ns1])
             self._subVBO(0, ns2, data[:, self._nsRange-ns1:])
             return
@@ -1800,7 +1795,7 @@ class EpochPlot(Plot, pypeline.Node):
         '''
 
         defaults = dict(label='', fontSize=10, fgColor=(0,0,1,.6),
-            labelColor=None, type='rect', markerType=[8, 7], markerSize=7)
+            labelColor=None, type='rect', markerType=[8, 7], markerSize=9)
 
         self._initProps(defaults, kwargs)
 
