@@ -1226,6 +1226,10 @@ class AnalogPlot(Plot, pypeline.Sampled):
             vec2 vertex = vec2(float(gl_VertexID % uNsRange) / uNsRange,
                 aVertex / 2 * uYSize[channel] + uYPos[channel]);
 
+            //int channel = gl_VertexID / (uNsRange+1);
+            //vec2 vertex = vec2(float(gl_VertexID % (uNsRange+1)) / uNsRange,
+            //    aVertex / 2 * uYSize[channel] + uYPos[channel]);
+
             vertex = vertex * 2 - vec2(1);
 
             gl_Position = vec4(vertex, 0, 1);
@@ -1409,6 +1413,12 @@ class AnalogPlot(Plot, pypeline.Sampled):
             self._prog2.setUniform('uColor', '4fv',
                 (self.fgColor.shape[0], self.fgColor))
 
+            # VBO is one sample longer than the actual data buffer
+            # the extra sample will be a duplicate of the first sample,
+            # creating the wrap-around effect of oscilloscope
+            # VBO dimensions: channels x (nsRange+1)
+            # paddedData = np.c_[self._buffer._data, self._buffer._data[:,0]]
+
             self._prog2.setVBO('aVertex', GL_FLOAT, 1, self._buffer._data,
                 GL_DYNAMIC_DRAW)
 
@@ -1434,6 +1444,34 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
         self.refresh()
 
+    def _subVBO(self, ns1, ns2):
+        '''Update a subregion of VBO'''
+        # wrap around
+        if ns1 >= ns2:
+            self._subVBO(ns1, self._nsRange)
+            if ns2: self._subVBO(0, ns2)
+            return
+        # elif ns1 == 0 and ns2 != self._nsRange:
+        #     self._subVBO(self._nsRange-1, self._nsRange)
+
+        # duplicate the first sample and append it to the end of data
+        # creating the wrap-around effect of oscilloscope
+        # data2 = np.c_[self._buffer._data, self._buffer._data[:,0]]
+        # extra = 1 if ns2 == self._nsRange else 0
+
+        with self._prog2:
+            if ns1 == 0 and ns2 == self._nsRange:
+                # transfer all samples to GPU
+                self._prog2.subVBO('aVertex', 0, self._buffer._data)
+            else:
+                # transfer subset of samples to GPU channel by channel
+                # note: because of the extra 'wrap-around' sample,
+                # VBO dimensions are: channels x (nsRange+1)
+                for i in range(self.channels):
+                    self._prog2.subVBO('aVertex',
+                        (i * (self._nsRange) + ns1) * sizeFloat,
+                        self._buffer._data[i, ns1:ns2])# +extra])
+
     def refresh(self, ns1=None, ns2=None):
         if ns1 is None: ns1 = 0
         if ns2 is None: ns2 = self._nsRange
@@ -1443,6 +1481,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
             self.refresh(ns1, self._nsRange)
             if ns2: self.refresh(0, ns2)
             return
+        # elif ns1 == 0 and ns2 != self._nsRange:
+        #     self.refresh(self._nsRange-1, self._nsRange)
 
         sizePxl = (self.sizePxl * getPixelRatio()).astype(np.int32)
         sizePxl = sizePxl.clip(None, self._fboSize)
@@ -1472,31 +1512,24 @@ class AnalogPlot(Plot, pypeline.Sampled):
         glClearColor(*self.bgColor)
         glClear(GL_COLOR_BUFFER_BIT)
 
-        # draw the analog signals
         with self._prog2:
-            for i in range(self.channels):
-                glDrawArrays(GL_LINE_STRIP, i * self._nsRange + ns1, ns2 - ns1)
+            if ns1 == 0 and ns2 == self._nsRange:
+                # draw all analog signals
+                # note: because of the extra 'wrap-around' sample,
+                # there are a total of channels*(nsRange+1) samples to plot
+                glDrawArrays(GL_LINE_STRIP, 0, (self._nsRange)*self.channels)
+            else:
+                # draw subsection of analog signals channel by channel
+                # extra = 1 if ns2 == self._nsRange else 0
+                for i in range(self.channels):
+                    glDrawArrays(GL_LINE_STRIP, i * (self._nsRange) + ns1,
+                        ns2 - ns1)# + extra)
 
         glDisable(GL_SCISSOR_TEST)
 
         # restore the previously bound framebuffer and viewport
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
         glViewport(*viewport)
-
-    def _subVBO(self, ns1, ns2, data):
-        '''Update a subregion of VBO'''
-        # wrap around
-        if ns1 >= ns2:
-            self._subVBO(ns1, self._nsRange, data[:, :self._nsRange-ns1])
-            if ns2: self._subVBO(0, ns2, data[:, self._nsRange-ns1:])
-            return
-
-        # transfer samples to GPU channel by channel
-        with self._prog2:
-            for i in range(self.channels):
-                self._prog2.subVBO('aVertex',
-                    (i * self._nsRange + ns1) * sizeFloat,
-                    data[i, :])
 
     def paintGL(self):
         if not self.visible: return
@@ -1505,8 +1538,8 @@ class AnalogPlot(Plot, pypeline.Sampled):
             if self._buffer.nsAvailable:
                 ns1 = self._buffer.nsRead % self._nsRange
                 ns2 = self._buffer.nsWritten % self._nsRange
-                data = self._buffer.read()
-                self._subVBO(ns1, ns2, data)
+                self._buffer.read() # advance read pointer
+                self._subVBO(ns1, ns2)
                 self.refresh(ns1, ns2)
                 self._prog.setUniform('uNs', '1i', self._buffer.nsWritten)
 
@@ -2156,6 +2189,7 @@ class SpikeOverlay(Plot, pypeline.Node):
         uniform vec2  uCanvasSize;  // pixels
 
         uniform float uTs;
+        uniform float uFs;
         uniform float uTsRange;
         uniform int   uSpikeCount;
         uniform int   uChannels;
@@ -2169,8 +2203,14 @@ class SpikeOverlay(Plot, pypeline.Node):
             pos += uMargin.xw / uCanvasSize;
             size -= (uMargin.xy + uMargin.zw) / uCanvasSize;
 
+            // channel of the current vertex
             int channel = gl_VertexID / uSpikeCount;
-            vec2 vertex = vec2(mod(aVertex.x, uTsRange) / uTsRange,
+
+            // calculate x and y positions of the marker
+            // account for AnalogPlot missing the last sample
+            // reorder multiplications and divisions for better accuracy
+            vec2 vertex = vec2(mod(aVertex.x, uTsRange)
+                * uFs / (uFs*uTsRange + 1),
                 ((aVertex.y + 1) / 2 + uChannels - 1 - channel) / uChannels);
 
             // clip if vertex has the default value (x == -1) or is passed
@@ -2286,6 +2326,7 @@ class SpikeOverlay(Plot, pypeline.Node):
         with self._prog:
             for name, value in self._uProps.items():
                 self._prog.setUniform(*value, self._props[name])
+            self._prog.setUniform('uFs', '1f', self.figure.fs)
             self._prog.setUniform('uTsRange', '1f', self.figure.tsRange)
             self._prog.setUniform('uFadeRange', '1f', self.figure.fadeRange)
             self._prog.setUniform('uChannels', '1i', self._channels)
@@ -2956,9 +2997,10 @@ class DemoWindow(QtWidgets.QWidget):
             )
         )
 
+        # self.fs = 10
         # self.generator = pypeline.SineGenerator(fs=self.fs,
         #     channels=self.channels, noisy=True)
-        # self.generator >> self.scope >> self.physiologyPlot
+        # self.generator >> self.scope >> self.scaler1 >> self.physiologyPlot
 
         mainLayout = QtWidgets.QHBoxLayout()
         mainLayout.setContentsMargins(0, 0, 0, 0)
