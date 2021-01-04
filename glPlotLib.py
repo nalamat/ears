@@ -399,7 +399,7 @@ class Item:
             self._props[name] = value
 
             if name in {'pos', 'size', 'margin'}:
-                self.resize()
+                self.resizeGL()
 
         else:
             super().__setattr__(name, value)
@@ -434,7 +434,12 @@ class Item:
 
         self.callItems('resizeGL')
 
-    _funcs = ['paintGL', 'wheelEvent']
+    def paintGL(self):
+        if not self.visible: return
+
+        self.callItems('paintGL')
+
+    _funcs = ['wheelEvent']
     for func in _funcs:
         exec('def %(func)s(self, *args, **kwargs):\n'
             '    self.callItems("%(func)s", *args, **kwargs)' % {'func':func})
@@ -2346,6 +2351,8 @@ class SpikeOverlay(Plot, pypeline.Node):
             self._prog.setUniform('uCanvasSize', '2f', self.canvas.sizePxl)
 
     def paintGL(self):
+        if not self.visible: return
+
         with self._prog:
             # send new data to GPU
             if self._newData:
