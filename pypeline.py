@@ -16,6 +16,7 @@ import scipy.signal
 import numpy        as np
 import scipy        as sp
 import datetime     as dt
+from   collections  import defaultdict
 
 import misc
 
@@ -1032,6 +1033,90 @@ class SpikeDetector(Sampled):
         while self._recalculate.wait():
             self._sd = np.median(np.abs(self._buffer.read()))/0.6745;
             self._recalculate.clear()
+
+
+class PSTHCalculator(Node):
+    def __init__(self, bounds=(-1, 2), bin=10e-3, **kwargs):
+        if not misc.listLike(bounds) or len(bounds) != 2:
+            raise ValueError('`bounds` should be an iterable of size 2')
+
+        self._bounds    = bounds
+        self._bin       = bin
+        self._binCount  = int((bounds[1] - bounds[0]) / bin)
+        self._cacheSize = (bounds[1] - bounds[0]) * 2000   # max 2000 spikes/sec
+
+        super().__init__(**kwargs)
+
+    def _configured(self, params, sinkParams):
+        super()._configured(params, sinkParams)
+
+        self._channels = params['channels']
+        self._spikeTimes = np.empty((self._channels, self._cacheSize))
+        self._spikeTimes.fill(np.nan)
+        self._writePointers = np.zeros(self._channels, int)
+        self._histogram = defaultdict(lambda: np.zeros((self._channels,
+            self._binCount)))
+        self._condCount = defaultdict(int)
+
+    def _writing(self, data, source):
+        data = super()._writing(data, source)
+
+        if not hasattr(self, '_channels'):
+            raise RuntimeError('Node is not configured')
+
+        if self._channels != len(data):
+            raise ValueError('`data` channel count does not match `channels`')
+
+        return data
+
+    def _written(self, data, source):
+        for ch in range(self._channels):
+            # unpack spike timestamps for the current channel
+            spikeTimes = [spike[0] for spike in data[ch]]
+            spikeTimes = np.array(spikeTimes)
+
+            # store spike times in a circular buffer
+            writeIndices = self._writePointers[ch] + np.arange(len(spikeTimes))
+            writeIndices %= self._cacheSize
+            self._spikeTimes[ch, writeIndices] = spikeTimes
+
+            # advance write pointer
+            self._writePointers[ch] = self._writePointers[ch] + len(spikeTimes)
+            self._writePointers[ch] %= self._cacheSize
+
+    def epoch(self, ts, cond):
+        for ch in range(self._channels):
+            # accumulate binned spike counts (histograms)
+            self._histogram[cond][ch] += np.histogram(
+                self._spikeTimes[ch] - ts, self._binCount, self._bounds)[0]
+            # accumulate condition count
+            self._condCount[cond] += 1
+
+        # calculate PSTH by normalizing histograms to condition counts
+        psth = defaultdict(lambda: np.zeros((self._channels, self._binCount)))
+        for cond, histogram in self._histogram.items():
+            psth[cond] = histogram / self._condCount[cond]
+
+        # pass PSTH down to sinks
+        super()._written(psth, self)
+
+    def test():
+        psthCalc = PSTHCalculator(bin=1, channels=1)
+        psthCalc >> Print()
+
+        psthCalc.write([[
+            (1,), (1.5,),
+            (2,), (2.4,), (2.6,), (2.9,),
+            (3.1,), (3.5,), (3.8,),
+            (4,), (4.8,),
+            (5.5,), (6,),
+
+            (10.5,), (10.7,),
+            (11,), (11.3,), (11.5,), (11.8,),
+            (12.5,),
+            ]])
+        psthCalc.epoch(3, 'go')
+        psthCalc.epoch(11, 'go')
 
 
 if __name__ == '__main__':
