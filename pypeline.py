@@ -280,7 +280,8 @@ class Func(Node):
 class Thread(Node):
     '''Pass data onto sink nodes in a daemon thread.'''
 
-    def __init__(self, autoStart=True, daemon=True, **kwargs):
+    def __init__(self, **kwargs):
+            # autoStart=True, daemon=True, **kwargs):
         super().__init__(**kwargs)
 
         # self._autoStart  = autoStart
@@ -359,8 +360,8 @@ class Split(Node):
             raise ValueError('`channels` should match `sink` count')
 
         # mask Node behavior
-        for sink, channel in zip(self._sinks, data):
-            sink.write(channel, self)
+        for sink, channelData in zip(self._sinks, data):
+            sink.write(channelData, self)
 
 
 class Sampled(Node):
@@ -617,9 +618,9 @@ class Downsample(Sampled):
             if ns <= self._buffer.nsRead: return
             data = self._buffer.read(to=ns)
 
-            data = self._downsample(data)
+            dataOut = self._downsample(data)
 
-        super()._written(data, source)
+        super()._written(dataOut, source)
 
 
 class DownsampleAverage(Downsample):
@@ -770,15 +771,15 @@ class GrandAverage(Sampled):
         self._mask = (True,) * self._channels
 
     def _written(self, data, source):
-        data2 = data.copy().astype(np.float64)
+        dataOut = data.copy().astype(np.float64)
         for channel in range(self._channels):
             mask = np.array(self._mask)
             if not mask[channel]: continue
             mask[channel] = False
             if not mask.any(): continue
-            data2[channel,:] -= data[mask,:].mean(axis=0)
+            dataOut[channel,:] -= data[mask,:].mean(axis=0)
 
-        super()._written(data2, source)
+        super()._written(dataOut, source)
 
 
 class CircularBuffer(Sampled):
@@ -945,6 +946,8 @@ class SpikeDetector(Sampled):
         self._th             = th
         self._spikeDuration  = spikeDuration
         self._spikeLength    = None
+        self._lastData       = None    # keep a portion of last data
+        self._lastSpike      = None    # index of last spike for each channel
         self._sd             = None    # standard deviation of the noise
         self._buffer         = None    # buffer for calculating SD
 
@@ -962,6 +965,7 @@ class SpikeDetector(Sampled):
 
         super()._configured(params, sinkParams)
 
+        self._lastSpike = np.zeros(self._channels)
         self._buffer = misc.CircularBuffer((self._channels, int(self._fs*10)))
 
     def _written(self, data, source):
@@ -979,25 +983,48 @@ class SpikeDetector(Sampled):
         # calculating standard deviation of noise
         if self._sd is None: return
 
+        # window required for extracting spikes of fixed length
         windowHalf  = self._spikeLength/2
         windowStart = int(np.floor(windowHalf))
         windowStop  = int(np.ceil(windowHalf))
-        dataOut     = [None]*self._channels
+        # list of lists containing tuples: (timestamp, peak amplitude, waveform)
+        dataOut     = [[] for i in range(self._channels)]
 
-        # TODO: append last half window samples of previous data to current data
+        # append last portion of data to the current data
+        if self._lastData is None:
+            lastLen = 0
+        else:
+            lastLen = self._lastData.shape[1]
+            data = np.c_[self._lastData, data]
+
+        # find spikes on each channel
         for i in range(self._channels):
-            dataOut[i] = []
-
+            # find peaks
             indices, _ = sp.signal.find_peaks(-data[i],
                 height=(self._tl * self._sd, self._th * self._sd),
                 distance=windowHalf)
 
             for index in indices:
-                if 0 <= index-windowStart and index+windowStop < len(data[i]):
-                    ts = (self.ns - data.shape[1] + index) / self.fs
-                    peak = data[i, index]
-                    dataOut[i].append((ts, peak,
-                        data[i, index-windowStart:index+windowStop]))
+                # timestamp of the peak, accounting for appended last data
+                ts = (self.ns - data.shape[1] + index - lastLen) / self.fs
+                # peaks should be within a safe window of data boundaries
+                if not (windowStart <= index < len(data[i]) - windowStop):
+                    continue
+                # do not detect the same peak twice
+                if ts <= self._lastSpike[i]:
+                    continue
+                # peak amplitude
+                peak = data[i, index]
+                # the entire spike waveform
+                waveform = data[i, index-windowStart:index+windowStop]
+                dataOut[i].append((ts, peak, waveform))
+
+            # save timestamp of last detected spike for each channel
+            if dataOut[i]:
+                self._lastSpike[i] = dataOut[i][-1][0]
+
+        # keep a portion of current data for next time
+        self._lastData = data[:, max(0, data.shape[1]-self._spikeLength):]
 
         super()._written(dataOut, source)
 
