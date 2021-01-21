@@ -2,9 +2,49 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2021 NESH Lab <https://ihlefeldlab.com>
 Distributed under GNU GPLv3. See LICENSE.txt for more info.
+'''
+
+'''
+NI DAQmx API Notes:
+
+Analog output in continuous samples (DAQmx_Val_ContSamps) and no regeneration
+(DAQmx_Val_DoNotAllowRegen) mode:
+    On a physical device in no regeneration mode when generation of samples
+        reaches end of the buffer, the task fails and performing any
+        operation on the task later on throws an error. However, this will
+        not happen when using a simulated device (set up in NI MAX).
+    Last argument of DAQmxCfgSampClkTiming, sampsPerChanToAcquire doesn't really
+        set the buffer size. With all values that I provided the buffer size
+        remained 0. You can either use DAQmxSetBufOutputBufSize to set buffer
+        size explicitly, or write some data before starting the task to set
+        buffer size implicitly to the data size.
+    DAQmxGetWriteCurrWritePos returns the index of last sample written in buffer
+        plus one. Everytime buffer is overwritten by DAQmxWriteAnalogF64, this
+        value changes. Even if the new data are less than the size of previous
+        write operation, old data in the tail of buffer are thrown away.
+    DAQmxWriteAnalogF64 writes data relative to the position and offset set by
+        DAQmxSetWriteRelativeTo and DAQmxSetWriteOffset. If the data being
+        written are less than the current buffer size, remaining data after the
+        last newly written sample will be thrown away. This will also affect
+        DAQmxGetWriteCurrWritePos. When writing data at a position in buffer
+        where samples are already generated (outputted), an error in thrown.
+        This error doesn't stop the write operation all together, meaning the
+        part of data which happen to fall after the last generated sample will
+        still be written to buffer, and DAQmxGetWriteCurrWritePos will always
+        point to the index of last sample written (even if unsuccessful) + 1.
+Everything related to pause trigger and software trigger:
+    SetDigLvlPauseTrigSrc
+    SetDigLvlPauseTrigWhen
+    SetPauseTrigType
+    GetPauseTrigTerm
+    SetDigLvlPauseTrigDigSyncEnable
+    SendSoftwareTrigger
+    SetExportedAdvTrigOutputTerm
+    SetExportedAdvTrigPulseWidth
+    ai/PauseTrigger
 '''
 
 import re
@@ -397,6 +437,27 @@ class DigitalOutput(BaseTask):
 
 class BaseAnalog(BaseTask):
     @property
+    def channels(self):
+        '''The original `channels` passed to the task during initialization.
+        Alias for `lines`.
+        '''
+        return self.lines
+
+    @property
+    def channelList(self):
+        '''Channels as a list of strings.
+        Alias for `lineList`.
+        '''
+        return self.lineList
+
+    @property
+    def channelCount(self):
+        '''Number of channels in the task.
+        Alias for `lineCount`.
+        '''
+        return self.lineCount
+
+    @property
     def fs(self):
         return self._fs
 
@@ -404,8 +465,8 @@ class BaseAnalog(BaseTask):
     def samples(self):
         return self._samples
 
-    def __init__(self, lines, fs, samples, name=None):
-        super().__init__(lines, name)
+    def __init__(self, channels, fs, samples, name=None):
+        super().__init__(channels, name)
 
         self._fs              = fs
         self._samples         = samples
@@ -543,14 +604,14 @@ class AnalogInput(BaseAnalog, pypeline.Sampled):
     def dataChunk(self):
         return self._dataChunk
 
-    def __init__(self, lines, fs, samples, name=None,
+    def __init__(self, channels, fs, samples, name=None,
             range=(-10.,10.), dataAcquired=None, dataChunk=100e-3,
             bufDuration=30, referenced=True,
             accurateFS=True, timebaseSrc=None, timebaseRate=None,
             startTrigger=None):
         '''
         Args:
-            lines (str): Example: '/dev1/ai0' or '/dev2/ai0:15'
+            channels (str): Example: '/dev1/ai0' or '/dev2/ai0:15'
             fs (float): Input sampling rate. Depending on the timebase clock,
                 device might not be able to generate the requested rate
                 accurately.
@@ -589,7 +650,7 @@ class AnalogInput(BaseAnalog, pypeline.Sampled):
                 See the following link for information on trigger sources:
                 zone.ni.com/reference/en-XX/help/370466Y-01/mxcncpts/termnames
         '''
-        super().__init__(lines, fs, samples, name)
+        super().__init__(channels, fs, samples, name)
 
         if SIM and samples!=np.inf:
             raise NotImplementedError('AnalogInput is not yet implemented for '
@@ -597,7 +658,7 @@ class AnalogInput(BaseAnalog, pypeline.Sampled):
 
         if not SIM:
             config = mx.DAQmx_Val_RSE if referenced else mx.DAQmx_Val_NRSE
-            self._task.CreateAIVoltageChan(self.lines, None, config,
+            self._task.CreateAIVoltageChan(self.channels, None, config,
                 *range, mx.DAQmx_Val_Volts, None)
 
         self._dataAcquired = misc.Event(dataAcquired)
@@ -811,14 +872,14 @@ class AnalogOutput(BaseAnalog):
     def dataChunk(self):
         return self._dataChunk
 
-    def __init__(self, lines, fs, samples, name=None,
+    def __init__(self, channels, fs, samples, name=None,
             range=(-10.,10.), regenerate=False, dataNeeded=None, dataChunk=5,
             onbrdBufDuration=5e-3, bufDuration=30,
             accurateFS=True, timebaseSrc=None, timebaseRate=None,
             startTrigger=None):
         '''
         Args:
-            lines (str): Example: '/dev1/ao0' or '/dev2/ao0:1'
+            channels (str): Example: '/dev1/ao0' or '/dev2/ao0:1'
             fs (float): Output sampling rate. Depending on the timebase clock,
                 device might not be able to generate the requested rate
                 accurately.
@@ -864,7 +925,7 @@ class AnalogOutput(BaseAnalog):
                 See the following link for information on terminals:
                 zone.ni.com/reference/en-XX/help/370466Y-01/mxcncpts/termnames
         '''
-        super().__init__(lines, fs, samples, name)
+        super().__init__(channels, fs, samples, name)
 
         if samples==np.inf and regenerate:
             raise ValueError('In %s task, cannot regenerate infinite number of '
@@ -875,7 +936,7 @@ class AnalogOutput(BaseAnalog):
                 'finite samples in `SIM` mode')
 
         if not SIM:
-            self._task.CreateAOVoltageChan(self.lines, '', *range,
+            self._task.CreateAOVoltageChan(self.channels, '', *range,
                 mx.DAQmx_Val_Volts, '')
 
         self._nsOffset   = 0
@@ -1068,7 +1129,6 @@ if __name__ == '__main__':
         # # finite samples
         # analogInput = AnalogInput('/dev1/ai0', fs=1000, samples=1000)
         # analogInput.start()
-        # analogInput.wait()
         # data = analogInput.read()
         #
         # # infinite samples
@@ -1171,43 +1231,3 @@ if __name__ == '__main__':
             del out
         if 'inp' in dir():
             del inp
-
-
-'''NI DAQmx API Notes
-
-Analog output in continuous samples (DAQmx_Val_ContSamps) and no regeneration
-(DAQmx_Val_DoNotAllowRegen) mode:
-    On a physical device in no regeneration mode when generation of samples
-        reaches end of the buffer, the task fails and performing any
-        operation on the task later on throws an error. However, this will
-        not happen when using a simulated device (set up in NI MAX).
-    Last argument of DAQmxCfgSampClkTiming, sampsPerChanToAcquire doesn't really
-        set the buffer size. With all values that I provided the buffer size
-        remained 0. You can either use DAQmxSetBufOutputBufSize to set buffer
-        size explicitly, or write some data before starting the task to set
-        buffer size implicitly to the data size.
-    DAQmxGetWriteCurrWritePos returns the index of last sample written in buffer
-        plus one. Everytime buffer is overwritten by DAQmxWriteAnalogF64, this
-        value changes. Even if the new data are less than the size of previous
-        write operation, old data in the tail of buffer are thrown away.
-    DAQmxWriteAnalogF64 writes data relative to the position and offset set by
-        DAQmxSetWriteRelativeTo and DAQmxSetWriteOffset. If the data being
-        written are less than the current buffer size, remaining data after the
-        last newly written sample will be thrown away. This will also affect
-        DAQmxGetWriteCurrWritePos. When writing data at a position in buffer
-        where samples are already generated (outputted), an error in thrown.
-        This error doesn't stop the write operation all together, meaning the
-        part of data which happen to fall after the last generated sample will
-        still be written to buffer, and DAQmxGetWriteCurrWritePos will always
-        point to the index of last sample written (even if unsuccessful) + 1.
-Everything related to pause trigger and software trigger:
-    SetDigLvlPauseTrigSrc
-    SetDigLvlPauseTrigWhen
-    SetPauseTrigType
-    GetPauseTrigTerm
-    SetDigLvlPauseTrigDigSyncEnable
-    SendSoftwareTrigger
-    SetExportedAdvTrigOutputTerm
-    SetExportedAdvTrigPulseWidth
-    ai/PauseTrigger
-'''

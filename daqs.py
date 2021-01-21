@@ -4,8 +4,8 @@ This module allows central access to DAQ task instances from all other modules.
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2021 NESH Lab <https://ihlefeldlab.com>
 Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
@@ -118,7 +118,7 @@ def getTS():
     return analogOutput.nsGenerated / analogOutput.fs
 
 def physiologyOutputDataNeeded(task, nsWritten, nsNeeded):
-    data = np.random.randn(task.lineCount, nsNeeded)
+    data = np.random.randn(task.channelCount, nsNeeded)
     t = np.arange(nsWritten, nsWritten+nsNeeded) / task.fs
     data += np.sin(2*np.pi*1*t)*10
     data += np.sin(2*np.pi*100*t)*.5
