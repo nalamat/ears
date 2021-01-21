@@ -148,11 +148,8 @@ Visit the EARS page at GitHub:
 Ask questions, report bugs and give suggestions here:
 <https://github.com/nalamat/ears/issues>
 
-Visit lab website:
-<https://centers.njit.edu/nesh>
-
-Feel free to email us about anything at:
-- NESH Lab: <ears.software@gmail.com>
+Visit NESH Lab website:
+<https://ihlefeldlab.com>
 
 Written by:
 - Nima Alamatsaz: <nima.alamatsaz@gmail.com>
