@@ -751,8 +751,8 @@ class GrandAverage(Sampled):
             raise RuntimeError('Cannot set `mask` before number of `channels`')
 
         # verify type and size
-        if not isinstance(mask, tuple):
-            raise TypeError('`mask` should be a tuple')
+        if not misc.listLike(mask):
+            raise TypeError('`mask` should be list-like')
         if len(mask) != self._channels:
             raise ValueError('Size of `mask` should match number of `channels`')
         for m in mask:
