@@ -2,8 +2,8 @@
 
 
 This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
+Copyright (C) 2017-2021 NESH Lab <https://ihlefeldlab.com>
 Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
@@ -205,6 +205,10 @@ class AnalogStorage(pypeline.Sampled):
 
 
 class EpochStorage(pypeline.Node):
+    @property
+    def partial(self):
+        return self._partial is not None
+
     def __init__(self, hdf5Node, compLib='zlib', compLevel=1, expectedRows=300,
             **kwargs):
         '''
