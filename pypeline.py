@@ -868,7 +868,7 @@ class Generator(Sampled):
         pauseTS = 0
 
         while True:
-            time.sleep(.02)
+            time.sleep(.01)
             if not self._continueEvent.isSet():
                 pause = dt.datetime.now()
                 self._continueEvent.wait()
@@ -918,7 +918,7 @@ class SpikeGenerator(Generator):
         data = .1*np.random.randn(self._channels, ns2-ns1)
         dt = (ns2-ns1)/self._fs
 
-        counts = np.random.uniform(0, dt*1000/30, self._channels)
+        counts = np.random.uniform(0, dt*1000/15, self._channels)
         counts = np.round(counts).astype(np.int)
 
         for channel in range(self._channels):
