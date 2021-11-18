@@ -35,7 +35,7 @@ Here's a video of the software in action:
 
 ## How to use
 
-Make sure all the packages listed in [DEPENDENCIES.txt](DEPENDENCIES.txt) are installed.
+Make sure all the packages listed in [REQUIREMENTS.txt](REQUIREMENTS.txt) are installed.
 The main entry point of the software is [load.py](load.py):
 
     $ python load.py
