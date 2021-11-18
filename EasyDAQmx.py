@@ -1,10 +1,8 @@
 '''Simplified OO interface with NI DAQ devices using PyDAQmx package.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
+This file is part of the EARS project <https://github.com/nalamat/ears>
 Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2021 NESH Lab <https://ihlefeldlab.com>
-Distributed under GNU GPLv3. See LICENSE.txt for more info.
 '''
 
 '''

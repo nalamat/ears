@@ -1,10 +1,8 @@
 '''Object-oriented model for routing and online processing of data streams.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2020 Nima Alamatsaz <nima.alamatsaz@gmail.com>
-Copyright (C) 2017-2020 NESH Lab <ears.software@gmail.com>
-Distributed under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import time
