@@ -1,13 +1,13 @@
-conda:
-- python (v3)
-- pyserial
-- scipy
-- numpy
-- pandas
-- pytables
-- pyqt (v5)
-- pyqtgraph
-- pyopengl
+# conda
+python~=3.6
+pyserial
+scipy
+numpy
+pandas
+pytables
+pyqt~=5.8
+pyqtgraph
+pyopengl
 
-pip:
-- pydaqmx (not needed with --sim option)
+# only pip
+pydaqmx    # not needed with --sim option
