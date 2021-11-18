@@ -36,7 +36,6 @@ from   ctypes      import sizeof, c_void_p, c_bool, c_uint, c_float, string_at
 from   OpenGL.GL   import *
 
 import misc
-import config
 import pypeline
 
 
@@ -85,7 +84,13 @@ def getPixelRatio():
     '''Use for high DPI display support.
     For example, retina displays have a pixel ratio of 2.0.
     '''
-    return QtWidgets.QApplication.screens()[0].devicePixelRatio()
+    #
+    # try:
+    #     return QtWidgets.QApplication.topLevelWidgets()[0].window() \
+    #         .windowHandle().screen().devicePixelRatio()
+    # except:
+    return QtWidgets.QApplication.screens()[-1].devicePixelRatio()
+        # return QtWidgets.QApplication.primaryScreen().devicePixelRatio()
 
 def setSurfaceFormat():
     '''Set Qt surface format: samples, profile and version.
@@ -1241,6 +1246,10 @@ class AnalogPlot(Plot, pypeline.Sampled):
         ''' \
         .replace('{MAX_CHANNELS}', str(MAX_CHANNELS))
 
+    _geomShader2 = '''
+
+        '''
+
     _fragShader2 = '''
         in float vChannel;
         out vec4 FragColor;
@@ -1264,12 +1273,13 @@ class AnalogPlot(Plot, pypeline.Sampled):
                 within +/- 1.
             fontSize (int): Font size for labels.
             fgColor (nx4 floats): RGBA 0-1.
+            mask (n bools): Which channels to show or hide. Defaults to True.
         '''
 
         # properties with their default values
         defaults = dict(label=[], fontSize=10, fgColor=(0,0,0,1),
             ypos=lambda ch, channels: 1-(ch+.5)/channels,
-            ysize=lambda ch, channels: 1/channels)
+            ysize=lambda ch, channels: 1/channels, mask=None)
 
         self._initProps(defaults, kwargs)
 
@@ -1309,6 +1319,16 @@ class AnalogPlot(Plot, pypeline.Sampled):
         if name in {'label', 'fontSize', 'fgColor'}:
             raise AttributeError('Cannot set attribute')
 
+        if name == 'mask' and self.channels is not None:
+            # verify type and size
+            if not misc.listLike(value):
+                raise TypeError('`mask` should be list-like')
+            if len(value) != self.channels:
+                raise ValueError('`mask` size must match number of `channels`')
+            for m in value:
+                if not isinstance(m, bool):
+                    raise ValueError('All `mask` elements must be `bool`')
+
         # set attribute
         super().__setattr__(name, value)
 
@@ -1345,6 +1365,11 @@ class AnalogPlot(Plot, pypeline.Sampled):
 
         if len(self.ysize) == 1:
             self.ysize = np.repeat(self.ysize, self.channels)
+
+        if self.mask is None:
+            self.mask = [True] * self.channels
+        else:
+            self.mask = self.mask    # verify mask size and type
 
         self._nsRange = int(np.ceil(self.figure.tsRange * self.fs))
 
@@ -2862,7 +2887,7 @@ class Canvas(Item, QtWidgets.QOpenGLWidget):
 
         self._timerDraw = QtCore.QTimer()
         self._timerDraw.timeout.connect(self.update)
-        self._timerDraw.setInterval(int(1000/60))
+        self._timerDraw.setInterval(int(1000/250))
 
         self._timerStats = QtCore.QTimer()
         self._timerStats.timeout.connect(self.updateStats)
@@ -3012,8 +3037,8 @@ class DemoWindow(QtWidgets.QWidget):
         mainLayout.addWidget(self.canvas)
 
         self.setLayout(mainLayout)
-        self.setWindowTitle('OpenGL Demo')
-        self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
+        self.setWindowTitle('glPlotLib Demo')
+        # self.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -3051,8 +3076,8 @@ if __name__ == '__main__':
     setSurfaceFormat()
 
     app = QtWidgets.QApplication([])
-    app.setApplicationName = config.APP_NAME
-    app.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
+    app.setApplicationName = 'glPlotLib Demo'
+    # app.setWindowIcon(QtGui.QIcon(config.APP_LOGO))
 
     demo = DemoWindow()
     demo.show()
