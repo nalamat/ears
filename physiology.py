@@ -22,8 +22,8 @@ import misc
 import hdf5
 import config
 import pypeline
-import plotting
 import globals     as gb
+import glPlotLib   as glp
 
 
 log = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         super().__init__(parent)
 
         self.initDAQ()
+        self.initStorage()
 
         # init central section of GUI
         central = QtWidgets.QMainWindow()
@@ -74,50 +75,47 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         daqs.physiologyInput.dataAcquired.connect(
             self.physiologyInputDataAcquired)
 
-    def initPlot(self):
-        physiologyFS           = daqs.physiologyInput.fs
-        lineCount              = daqs.physiologyInput.lineCount
-        lineLabels             = list(map(str, np.arange(lineCount)+1))
-        behavior               = gb.behaviorWindow
-
-
+    def initStorage(self):
         self.physiologyStorage = hdf5.AnalogStorage('/trace/physiology')
 
         # storage pipeline
         daqs.physiologyInput >> self.physiologyStorage
 
-        self.timePlot          = plotting.ScrollingPlotWidget(xRange=10,
-                                yLimits=(-4,15), yLabel='Electrodes',
-                                yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
+    def initPlot(self):
+        physiologyFS           = daqs.physiologyInput.fs
+        channelCount           = daqs.physiologyInput.channelCount
+        lineLabels             = list(map(str, np.arange(channelCount)+1))
+        behavior               = gb.behaviorWindow
+        tsRange                = 10
 
-        self.physiologyTrace   = plotting.AnalogPlot(self.timePlot,
-                                label=lineLabels,
-                                yScale=.1 if config.SIM else 10,
-                                yOffset=14, yGap=-1)
+        div = 1
+        while (channelCount / div) % 1 != 0 or channelCount / div > 16:
+            div += 1
+        yTickCount = int(channelCount / div + 1)
 
-        # self.physiologyTrace0  = plotting.AnalogPlot(self.timePlot,
-        #                         label=lineLabels[0],
-        #                         yScale=.1, yOffset=14, yGap=-1)
         #
-        # self.physiologyTrace1  = plotting.AnalogPlot(self.timePlot,
-        #                         label=lineLabels[1],
-        #                         yScale=.1, yOffset=13, yGap=-1)
-        #
-        # self.physiologyTrace2  = plotting.AnalogPlot(self.timePlot,
-        #                         label=lineLabels[2],
-        #                         yScale=.1, yOffset=12, yGap=-1)
-        #
-        # self.physiologyTrace3  = plotting.AnalogPlot(self.timePlot,
-        #                         label=lineLabels[3],
-        #                         yScale=.1, yOffset=11, yGap=-1)
+        self.canvas = glp.Canvas(self)
+        self.scope = glp.Scope(self.canvas, pos=(0,0), size=(1,1),
+            margin=(60,20,20,10), tsRange=tsRange,
+            xTicks=np.linspace(0, 1, tsRange+1),
+            yTicks=np.linspace(.1, 1, yTickCount))
 
+        # analog physiology plot
+        self.physiologyPlot = glp.AnalogPlot(self.scope, pos=(0,.1),
+            size=(1,.9), label=np.arange(channelCount)+1,
+            fgColor=glp.defaultColors, fontSize=18)
+        # self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
+
+        # physiology processing nodes
         self.grandAverage      = pypeline.GrandAverage()
         self.filter            = pypeline.LFilter(fl=300, fh=6e3, n=6)
+        self.scaler            = pypeline.Scaler(scale=0, dB=True)
 
         # processing and plotting pypeline
-        (daqs.physiologyInput >> pypeline.Thread() >> self.filter
-            >> self.grandAverage >> pypeline.DownsampleMinMax(ds=32)
-            >> self.physiologyTrace)
+        (daqs.physiologyInput >> pypeline.Thread() >>
+            self.grandAverage >> self.filter >> self.scaler >>
+            (self.scope,
+            self.physiologyPlot))
             # >> pypeline.Split() >> (pypeline.Node(), pypeline.DummySink(14))
             # >> (self.physiologyTrace0,
             #    pypeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
@@ -125,48 +123,28 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             #    pypeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
             #    ))
 
-
         # rectangular epoch plots
-        self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
-                                label='Trial', source=behavior.trialEpoch,
-                                yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)
-        self.targetEpoch      = plotting.RectEpochChannel(self.timePlot,
-                                label='Target', source=behavior.targetEpoch,
-                                yOffset=-2.5, yRange=.5,
-                                color=config.COLOR_TARGET)
-        self.pumpEpoch        = plotting.RectEpochChannel(self.timePlot,
-                                label='Pump', source=behavior.pumpEpoch,
-                                yOffset=-3, yRange=.5, color=config.COLOR_PUMP)
-        self.timeoutEpoch     = plotting.RectEpochChannel(self.timePlot,
-                                label='Timeout', source=behavior.timeoutEpoch,
-                                yOffset=-3.5, yRange=.5,
-                                color=config.COLOR_TIMEOUT)
+        self.trialEpochPlot = glp.EpochPlot(self.scope, pos=(0,.075),
+            size=(1,.025), label='Trial', fgColor=config.COLOR_TRIAL)
+        self.targetEpochPlot = glp.EpochPlot(self.scope, pos=(0,.05),
+            size=(1,.025), label='Target', fgColor=config.COLOR_TARGET)
+        self.pumpEpochPlot = glp.EpochPlot(self.scope, pos=(0,.025),
+            size=(1,.025), label='Pump', fgColor=config.COLOR_PUMP)
+        self.timeoutEpochPlot = glp.EpochPlot(self.scope, pos=(0,0),
+            size=(1,.025), label='Timeout', fgColor=config.COLOR_TIMEOUT)
 
-        self.timePlot.timeBase = self.physiologyTrace
-        self.timePlot.start()
+        behavior.trialEpochPlot   >> self.trialEpochPlot
+        behavior.targetEpochPlot  >> self.targetEpochPlot
+        behavior.pumpEpochPlot    >> self.pumpEpochPlot
+        behavior.timeoutEpochPlot >> self.timeoutEpochPlot
 
-        self.fftPlot          = plotting.FFTPlotWidget(physiologyFS, lineCount,
-                                xLimits=(0, 1e3), yLimits=(-4,15),
-                                yScale=1e-3, yOffset=14, yGap=-1)
-        self.fftPlot.start()
-
-        # self.spikePlot        = plotting.ScrollingPlotWidget(
-        #                         xLimits=(-5e-3, 5e-3), xGrid=1e-3,
-        #                         xLabel='Time (ms)',
-        #                         xTicksFormat=lambda x: '%g' % (x*1e3),
-        #                         yLimits=(-4,15),
-        #                         yGrid=[-3.5,-1.5,-1] + list(range(lineCount)),
-        #                         timePlot=False)
-
-        layout = QtWidgets.QGridLayout()
-        layout.setColumnStretch(0,3)
-        layout.setColumnStretch(1,1)
-        # layout.setColumnStretch(2,1)
+        layout = QtWidgets.QHBoxLayout()
         layout.setContentsMargins(0,0,0,0)
         layout.setSpacing(0)
-        layout.addWidget(self.timePlot  , 0, 0)
-        layout.addWidget(self.fftPlot   , 0, 1)
+        # layout.addWidget(self.timePlot  , 0, 0)
+        # layout.addWidget(self.fftPlot   , 0, 1)
         # layout.addWidget(self.spikePlot , 0, 2)
+        layout.addWidget(self.canvas)
 
         # for i in range(4):
         #     for j in range(4):
@@ -253,16 +231,14 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
         layout = QtWidgets.QVBoxLayout()
 
-        yScale = int(20*np.log10(self.physiologyTrace.yScale))
-        # yScale = int(20*np.log10(self.physiologyTrace0.yScale))
-        self.lblYScale = QtWidgets.QLabel('Scale: %d dB' % yScale)
+        self.lblYScale = QtWidgets.QLabel('Scale: %d dB' % self.scaler.scale)
         layout.addWidget(self.lblYScale)
         self.sldYScale = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.sldYScale.setMinimum(-60)
         self.sldYScale.setMaximum(60)
         self.sldYScale.setSingleStep(5)
         self.sldYScale.setPageStep(5)
-        self.sldYScale.setValue(yScale)
+        self.sldYScale.setValue(self.scaler.scale)
         self.sldYScale.valueChanged.connect(self.sldYScaleValueChanged)
         layout.addWidget(self.sldYScale)
 
@@ -382,36 +358,37 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
     def applyClicked(self, *args):
         # get values from widgets
         # self.physiologyTrace.refreshBlock   = True
-        yScale = 10**(self.sldYScale.value()/20)
-        self.physiologyTrace.yScale = yScale
+        # yScale = 10**(self.sldYScale.value()/20)
+        # self.physiologyTrace.yScale = yScale
         # self.physiologyTrace0.yScale = yScale
         # self.physiologyTrace1.yScale = yScale
         # self.physiologyTrace2.yScale = yScale
         # self.physiologyTrace3.yScale = yScale
         # self.physiologyTrace.filter         = (self.sldFilterFL.value(),
         #    self.sldFilterFH.value())
-        self.filter.fl = self.sldFilterFL.value()
-        self.filter.fh = self.sldFilterFH.value()
         # self.physiologyTrace.linesVisible   = tuple(
         #     chk[0].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
         # self.physiologyTrace.linesGrandMean = tuple(
         #     chk[1].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
-        self.grandAverage.mask = tuple(
-            chk[1].checkState()==QtCore.Qt.Checked for chk in self.chkElecs)
+
         # self.physiologyTrace.refreshBlock = False
         # self.physiologyTrace.refresh()
+        pass
 
     @gui.showExceptions
     def sldYScaleValueChanged(self, value):
-        self.lblYScale  .setText('Scale: %d dB'         % value)
+        self.lblYScale.setText('Scale: %d dB'         % value)
+        self.scaler.scale = value
 
     @gui.showExceptions
     def sldFilterFLValueChanged(self, value):
         self.lblFlFilter.setText('Lower cutoff: %d Hz'  % value)
+        self.filter.fl = self.sldFilterFL.value()
 
     @gui.showExceptions
     def sldFilterFHValueChanged(self, value):
         self.lblFhFilter.setText('Higher cutoff: %d Hz' % value)
+        self.filter.fh = self.sldFilterFH.value()
 
     @gui.showExceptions
     def chkAllChanged(self, index, *args):
@@ -422,6 +399,7 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             gui.setCheckState(chk[index], state)
         for chk in self.chkElecs:
             gui.setCheckState(chk[index], state)
+        self.refreshCheckBoxes()
 
     @gui.showExceptions
     def chkShanksChanged(self, shank, index, *args):
@@ -466,10 +444,10 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
 
     def physiologyInputDataAcquired(self, task, data):
         # self.physiologyTrace.append(data)
-        self.fftPlot.append(data)
+        # self.fftPlot.append(data)
         # for i in range(len(self.traces)):
         #     self.traces[i].append(data[i,:])
-        # pass
+        pass
 
     ########################################
     # house keeping
@@ -492,6 +470,9 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
             for depth in range(len(self.chkDepths)):
                 gui.setCheckState(self.chkDepths[depth][index],
                     getState(config.ELECTRODE_MAP.iloc[depth,:]))
+
+        self.grandAverage.mask = [chk[1].checkState()==QtCore.Qt.Checked
+            for chk in self.chkElecs]
 
 
 # playground

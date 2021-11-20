@@ -27,8 +27,8 @@ import misc
 import pump
 import config
 import pypeline
-import plotting
 import globals          as     gb
+import glPlotLib        as     glp
 
 
 log = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.initLocals()
         self.initGlobals()    # before init bars
         self.initDAQ()
+        self.initStorage()
         self.initPump()
 
         # init central section of GUI
@@ -151,96 +152,105 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         daqs.init()
 
         daqs.digitalInput.edgeDetected.connect(self.digitalInputEdgeDetected)
-        daqs.analogInput .dataAcquired.connect(self.analogInputDataAcquired )
+        # daqs.analogInput .dataAcquired.connect(self.analogInputDataAcquired )
         daqs.analogOutput.dataNeeded  .connect(self.analogOutputDataNeeded  )
+
+    def initStorage(self):
+        # epochs from digital input
+        self.pokeEpochStorage    = hdf5.EpochStorage('/epoch/poke')
+        self.spoutEpochStorage   = hdf5.EpochStorage('/epoch/spout')
+        self.buttonEpochStorage  = hdf5.EpochStorage('/epoch/button')
+
+        daqs.digitalInput >> pypeline.Split() >> (
+            self.pokeEpochStorage,
+            self.spoutEpochStorage,
+            self.buttonEpochStorage)
+
+        # software-generated epochs
+        self.trialEpochStorage   = hdf5.EpochStorage('/epoch/trial')
+        self.targetEpochStorage  = hdf5.EpochStorage('/epoch/target')
+        self.pumpEpochStorage    = hdf5.EpochStorage('/epoch/pump')
+        self.timeoutEpochStorage = hdf5.EpochStorage('/epoch/timeout')
+
+        # speaker and microphone traces
+        if gb.session.recording.value == 'Physiology':
+            self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
+            self.micStorage     = hdf5.AnalogStorage('/trace/mic')
+
+            daqs.analogInput >> pypeline.Split() >> (
+                self.speakerStorage,
+                self.micStorage,
+                pypeline.DummySink(2))
 
     def initPump(self):
         self.pump = pump.PumpInterface()
         self.pump.setDirection('infuse')
 
     def initPlot(self):
-
         # inputFS           = daqs.analogInput.fs
         # physiology        = gb.session.recording.value == 'Physiology'
         # speakerNode       = '/trace/speaker' if physiology else None
         # micNode           = '/trace/mic'     if physiology else None
+        tsRange             = 10
+        y                   = 17
 
-        # plot widget
-        self.plot         = plotting.ScrollingPlotWidget(xRange=10,
-                            yLimits=(-1,7.5), yGrid=[-.5,0,1,2,2.5,4.5,5,6,7])
+        # main OpenGL widget
+        self.canvas         = glp.Canvas(self)
 
-        # analog traces
-        # self.speakerTrace = plotting.AnalogChannel(inputFS, self.plot,
-        #                     label='Speaker', hdf5Node=speakerNode,
-        #                     yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
-        # self.micTrace     = plotting.AnalogChannel(inputFS, self.plot,
-        #                     label='Mic', hdf5Node=micNode,
-        #                     yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
-        # self.pokeTrace    = plotting.AnalogChannel(inputFS, self.plot,
-        #                     label='Poke', labelOffset=.5,
-        #                     yScale=.2, yOffset=1, color=config.COLOR_POKE)
-        # self.spoutTrace   = plotting.AnalogChannel(inputFS, self.plot,
-        #                     label='Spout', labelOffset=.5,
-        #                     yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+        # main plotting figure with oscilloscope-style cycling fading effect
+        self.scope          = glp.Scope(self.canvas, pos=(0,0), size=(1,1),
+            margin=(60,20,20,10), tsRange=tsRange,
+            xTicks=np.linspace(0, 1, tsRange+1),
+            yTicks=np.r_[1, 2, 4, 6, 7, 11, 12, 13, 14, 15, 16]/y)
 
-        self.speakerTrace = plotting.AnalogPlot(self.plot,
-                            label='Speaker',
-                            yScale=.1, yOffset=6.5, color=config.COLOR_SPEAKER)
-        self.micTrace     = plotting.AnalogPlot(self.plot,
-                            label='Mic',
-                            yScale=.1, yOffset=5.5, color=config.COLOR_MIC)
-        self.pokeTrace    = plotting.AnalogPlot(self.plot,
-                            label='Poke', labelOffset=.5,
-                            yScale=.2, yOffset=1, color=config.COLOR_POKE)
-        self.spoutTrace   = plotting.AnalogPlot(self.plot,
-                            label='Spout', labelOffset=.5,
-                            yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
+        # analog plots
+        self.speakerPlot    = glp.AnalogPlot(self.scope, pos=(0,14/y),
+            size=(1,2/y), label='Speaker', fgColor=config.COLOR_SPEAKER)
+        self.micPlot        = glp.AnalogPlot(self.scope, pos=(0,12/y),
+            size=(1,2/y), label='Mic', fgColor=config.COLOR_MIC)
+        self.pokePlot       = glp.AnalogPlot(self.scope, pos=(0,4/y),
+            size=(1,2/y), label='Poke', fgColor=config.COLOR_POKE)
+        self.spoutPlot      = glp.AnalogPlot(self.scope, pos=(0,2/y),
+            size=(1,2/y), label='Spout', fgColor=config.COLOR_SPOUT)
 
-        (daqs.analogInput >> pypeline.DownsampleAverage(ds=4) >>
-            pypeline.Split() >> (self.speakerTrace,
-                                 self.micTrace,
-                                 self.pokeTrace,
-                                 self.spoutTrace))
+        daqs.analogInput >> pypeline.Split() >> (
+            self.speakerPlot >> self.scope,
+            self.micPlot,
+            self.pokePlot,
+            self.spoutPlot)
 
-        if gb.session.recording.value == 'Physiology':
-            self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
-            self.micStorage     = hdf5.AnalogStorage('/trace/mic')
+        # marker epochs
+        self.pokeEpochPlot = glp.EpochPlot(self.scope, pos=(0,4/y),
+            size=(1,2/y), type='marker', fgColor=config.COLOR_POKE)
+        self.spoutEpochPlot = glp.EpochPlot(self.scope, pos=(0,2/y),
+            size=(1,2/y), type='marker', fgColor=config.COLOR_SPOUT)
+        self.buttonEpochPlot = glp.EpochPlot(self.scope, pos=(0,0/y),
+            size=(1,2/y), type='marker', fgColor=config.COLOR_BUTTON)
 
-            daqs.analogInput >> pypeline.Split() >> (self.speakerStorage,
-                                                     self.micStorage,
-                                                     pypeline.DummySink(2))
+        daqs.digitalInput >> pypeline.Split() >> (
+            self.pokeEpochPlot,
+            self.spoutEpochPlot,
+            self.buttonEpochPlot)
 
         # rectangular epochs
-        self.trialEpoch   = plotting.RectEpochChannel(self.plot,
-                            label='Trial', hdf5Node='/epoch/trial',
-                            yOffset=4, yRange=.5, color=config.COLOR_TRIAL)
-        self.targetEpoch  = plotting.RectEpochChannel(self.plot,
-                             label='Target', hdf5Node='/epoch/target',
-                            yOffset=3.5, yRange=.5, color=config.COLOR_TARGET)
-        self.pumpEpoch    = plotting.RectEpochChannel(self.plot,
-                            label='Pump', hdf5Node='/epoch/pump',
-                            yOffset=3, yRange=.5, color=config.COLOR_PUMP)
-        self.timeoutEpoch = plotting.RectEpochChannel(self.plot,
-                            label='Timeout', hdf5Node='/epoch/timeout',
-                            yOffset=2.5, yRange=.5, color=config.COLOR_TIMEOUT)
+        self.trialEpochPlot = glp.EpochPlot(self.scope, pos=(0,10/y),
+            size=(1,1/y), label='Trial', fgColor=config.COLOR_TRIAL)
+        self.targetEpochPlot = glp.EpochPlot(self.scope, pos=(0,9/y),
+            size=(1,1/y), label='Target', fgColor=config.COLOR_TARGET)
+        self.pumpEpochPlot = glp.EpochPlot(self.scope, pos=(0,8/y),
+            size=(1,1/y), label='Pump', fgColor=config.COLOR_PUMP)
+        self.timeoutEpochPlot = glp.EpochPlot(self.scope, pos=(0,7/y),
+            size=(1,1/y), label='Timeout', fgColor=config.COLOR_TIMEOUT)
 
-        # symbol epochs
-        self.pokeEpoch    = plotting.SymbEpochChannel(self.plot,
-                            hdf5Node='/epoch/poke',
-                            yOffset=1.5, color=config.COLOR_POKE)
-        self.spoutEpoch   = plotting.SymbEpochChannel(self.plot,
-                            hdf5Node='/epoch/spout',
-                            yOffset=0.5, color=config.COLOR_SPOUT)
-        self.buttonEpoch  = plotting.SymbEpochChannel(self.plot,
-                            label='Button', hdf5Node='/epoch/button',
-                            yOffset=-.25, color=config.COLOR_BUTTON)
+        self.trialEpochStorage   >> self.trialEpochPlot
+        self.targetEpochStorage  >> self.targetEpochPlot
+        self.pumpEpochStorage    >> self.pumpEpochPlot
+        self.timeoutEpochStorage >> self.timeoutEpochPlot
 
-        # self.generator    = plotting.AnalogGenerator(self.pokeTrace,
-        #                     self.spoutTrace, self.speakerTrace, self.micTrace)
+        # self.generator = plotting.AnalogGenerator(self.pokeTrace,
+        #                  self.spoutTrace, self.speakerTrace, self.micTrace)
 
-        self.plot.timeBase = self.speakerTrace
-
-        return self.plot
+        return self.canvas
 
     def initControlBar(self):
         title = QtWidgets.QLabel('Control')
@@ -382,7 +392,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         wig = QtWidgets.QTableWidget(1, len(labels))
         wig.setHorizontalHeaderLabels(labels)
-        wig.horizontalHeader().setResizeMode(QtWidgets.QHeaderView.Stretch)
+        wig.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.Stretch)
         wig.horizontalHeader().setHighlightSections(False)
         wig.verticalHeader().setVisible(False)
         wig.verticalHeader().setHighlightSections(False)
@@ -598,7 +609,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         self.tblTrialLog = QtWidgets.QTableWidget(0, len(labels))
         self.tblTrialLog.setHorizontalHeaderLabels(labels)
-        self.tblTrialLog.horizontalHeader().setResizeMode(
+        self.tblTrialLog.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.Stretch)
         self.tblTrialLog.verticalHeader().setVisible(False)
         self.tblTrialLog.verticalHeader().setSectionResizeMode(
@@ -631,7 +642,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         self.tblPerformance = QtWidgets.QTableWidget(0, len(labels))
         self.tblPerformance.setHorizontalHeaderLabels(labels)
-        self.tblPerformance.horizontalHeader().setResizeMode(
+        self.tblPerformance.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.Stretch)
         self.tblPerformance.verticalHeader().setVisible(False)
         self.tblPerformance.verticalHeader().setSectionResizeMode(
@@ -1041,7 +1052,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         '''Called by `updateTimer` every 20ms.'''
         ts = daqs.getTS()
         gb.status.ts .value         = '%02d:%05.2f' % (ts//60, ts%60)
-        gb.status.fps.value         = '%.1f' % self.plot.measuredFPS
+        gb.status.fps.value         = '%.1f' % self.canvas.fps
         gb.status.totalReward.value = '%.3f' % self.pump.getInfused()
 
     ########################################
@@ -1052,13 +1063,14 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.eventQueue.put(((name, edge), ts))
 
     def analogInputDataAcquired(self, task, data):
-        speaker, mic, poke, spout = data
+        # speaker, mic, poke, spout = data
         # log.info('Appending analog data: %d samples', data.shape[-1])
         # self.speakerTrace.append(speaker)
         # self.micTrace    .append(mic    )
         # self.pokeTrace   .append(poke   )
         # self.spoutTrace  .append(spout  )
         # log.info('Appended analog data')
+        pass
 
     def analogOutputDataNeeded(self, task, nsWritten, nsNeeded):
         # random analog trace
@@ -1127,26 +1139,19 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
     @gui.logExceptions
     def handleEvent(self, event, ts):
-        # prase events from `digitalInputEdgeDetected`
+        # parse events from `digitalInputEdgeDetected`
         if isinstance(event, tuple):
             if len(event) != 2:
                 raise ValueError('`event` tuple should be exactly of length 2')
 
             name, edge = event
-            epochs = {'poke':self.pokeEpoch, 'spout':self.spoutEpoch,
-                'button':self.buttonEpoch}
 
-            if name in epochs:
-                if edge == 'rising':
-                    epochs[name].start(ts)
-                    event = name.title() + ' start'
-                elif edge == 'falling':
-                    epochs[name].stop(ts)
-                    event = name.title() + ' stop'
-                else:
-                    raise ValueError('Invalid `edge` value "%s"' % edge)
+            if edge == 'rising':
+                event = name.title() + ' start'
+            elif edge == 'falling':
+                event = name.title() + ' stop'
             else:
-                raise ValueError('Invalid line `name` "%s"' % name)
+                raise ValueError('Invalid `edge` value "%s"' % edge)
 
         mode  = gb.session.experimentMode.value
         state = gb.status.trialState.value
@@ -1273,7 +1278,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     log.info('Canceling trial at %.3f', ts)
                     gb.status.trialState.value = 'Intertrial duration'
                     self.stopEventTimer()
-                    self.trialEpoch.stop(ts)
+                    # self.trialEpoch.stop(ts)
+                    self.trialEpochStorage.write(ts)
                     self.startEventTimer(gb.trial.intertrialDuration.value,
                         'Intertrial duration elapsed')
                     self.evaluateParadigm()
@@ -1395,7 +1401,6 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         self.startEventThread ()
         daqs            .start()
-        self.plot       .start()
         self.updateTimer.start()
 
         gb.status.experimentState.value = 'Running'
@@ -1418,28 +1423,28 @@ class BehaviorWindow(QtWidgets.QMainWindow):
     def pauseExperiment(self):
         log.info('Pausing experiment')
 
-        self.stopEventThread ()
-        self.stopTarget      ()
-        self.stopPump        ()
-        self.stopTimeout     ()
-        self.stopTrial       ()
-        daqs            .stop()
+        self.stopEventThread()
+        self.stopTarget()
+        self.stopPump()
+        self.stopTimeout()
+        self.stopTrial()
+        daqs.stop()
         ts = daqs.getTS()
-        self.pokeEpoch  .stop(ts)
-        self.spoutEpoch .stop(ts)
-        self.buttonEpoch.stop(ts)
+        if self.pokeEpochStorage.partial:   self.pokeEpochStorage.write(ts)
+        if self.spoutEpochStorage.partial:  self.spoutEpochStorage.write(ts)
+        if self.buttonEpochStorage.partial: self.buttonEpochStorage.write(ts)
+
         # TODO: zero pad analogInput, physiologyInput and probably
         # analogOutput._nsOffset to align them accroding to their fs
         ns         = daqs.analogOutput.nsGenerated
         nsInput    = int(ns / daqs.analogOutput.fs * daqs.analogInput.fs)
-        nsAcquired = self.speakerTrace.ns
+        nsAcquired = self.speakerPlot.ns
         nsNeeded   = nsInput - nsAcquired
         log.info('Zero-padding recordings (ns: %d, nsInput: %d, nsAcquired: '
             '%d, nsNeeded: %d)' % (ns, nsInput, nsAcquired, nsNeeded) )
         if nsNeeded>0:
             data = np.zeros((daqs.analogInput.lineCount, nsNeeded))
             self.analogInputDataAcquired(daqs.analogInput, data)
-        self.plot       .stop()
         self.updateTimer.stop()
 
         # set to zero in order to output a ramp when resuming experiment
@@ -1495,7 +1500,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 gb.session.experimentMode.value)
 
         # start trial epoch
-        self.trialEpoch.start(ts)
+        # self.trialEpoch.start(ts)
+        self.trialEpochStorage.write(ts)
         gb.trial.trialStart.value = ts
         # self.trialActive = True
 
@@ -1534,7 +1540,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         log.info('Stopping trial at %.3f', ts)
 
-        self.trialEpoch.stop(ts)
+        # self.trialEpoch.stop(ts)
+        self.trialEpochStorage.write(ts)
 
         if response is None:
             return
@@ -1746,17 +1753,17 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         file = os.path.basename(self.targetFile)
         ts = ns / fs
         if mode=='trigger':
-            self.targetEpoch.append(ts, ts+targetDuration)
+            self.targetEpochStorage.write([ts, ts+targetDuration])
             gb.trial.targetStart.value = ts
             gb.trial.targetStop.value  = ts+targetDuration
             log.info('Triggering target "%s" at %.3f for %g duration',
                 file, ts, targetDuration)
         elif mode=='start':
-            self.targetEpoch.start(ts)
+            self.targetEpochStorage.write(ts)
             gb.trial.targetStart.value = ts
             log.info('Starting target "%s" at %.3f', file, ts)
         elif mode=='stop':
-            self.targetEpoch.stop(ts+targetDuration)
+            self.targetEpochStorage.write(ts+targetDuration)
             gb.trial.targetStop.value = ts+targetDuration
             log.info('Stopping target "%s" at %.3f', file, ts)
 
@@ -1844,7 +1851,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.pump.start()
         # record timestamp
         ts = daqs.getTS()
-        self.pumpEpoch.start(ts)
+        self.pumpEpochStorage.write(ts)
         gb.trial.pumpStart.value = ts
         self.pumpActive = True
 
@@ -1858,7 +1865,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # self.pump.resume()
         # record timestamp
         ts = daqs.getTS()
-        self.pumpEpoch.stop(ts)
+        self.pumpEpochStorage.write(ts)
         gb.trial.pumpStop.value = ts
         self.pumpActive = False
         if self.pumpUpdateReq:
@@ -1873,7 +1880,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # record timestamp
         ts = daqs.getTS()
         duration = gb.trial.rewardVolume.value*60/gb.trial.pumpRate.value/1000
-        self.pumpEpoch.append(ts, ts+duration)
+        self.pumpEpochStorage.write([ts, ts+duration])
         gb.trial.pumpStart.value = ts
         gb.trial.pumpStop .value = ts+duration
 
@@ -1893,7 +1900,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # record timestamp
         if recordTS:
             ts = daqs.getTS()
-            self.timeoutEpoch.start(ts)
+            self.timeoutEpochStorage.write(ts)
             gb.trial.timeoutStart.value = ts
 
     def stopTimeout(self, recordTS=True):
@@ -1904,7 +1911,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # record timestamp
         if recordTS:
             ts = daqs.getTS()
-            self.timeoutEpoch.stop(ts)
+            self.timeoutEpochStorage.write(ts)
             gb.trial.timeoutStop.value = ts
 
     def triggerTimeout(self):
@@ -1916,7 +1923,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         # record timestamp
         ts = daqs.getTS()
         duration = gb.trial.timeoutDuration.value
-        self.timeoutEpoch.append(ts, ts+duration)
+        self.timeoutEpochStorage.write([ts, ts+duration])
         gb.trial.timeoutStart.value = ts
         gb.trial.timeoutStop.value  = ts+duration
         # setup timer to stop timeout

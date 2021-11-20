@@ -41,6 +41,7 @@ LAST_SESSION_FILE = LOG_DIR   + 'last-session' + SETTINGS_EXT
 APP_LOGO          = ICONS_DIR + 'logo.svg'
 
 # interface colors and styles
+# Qt colors RGB 0-255
 COLOR_GO          = (100, 200, 110)    # light green
 COLOR_GOREMIND    = (220, 220,   0)    # yellow
 COLOR_NOGO        = (255, 100, 100)    # light red
@@ -50,17 +51,18 @@ COLOR_MAP         = {'Go':COLOR_GO, 'Go remind':COLOR_GOREMIND,
                     'Nogo':COLOR_NOGO, 'Nogo remind':COLOR_NOGOREMIND,
                     'Nogo repeat':COLOR_NOGOREPEAT}
 
-COLOR_SPEAKER     = (255,   0,   0)
-COLOR_MIC         = (  0,   0,   0)
-COLOR_POKE        = (  0, 200,   0)
-COLOR_SPOUT       = (  0,   0, 200)
-COLOR_BUTTON      = (100, 100, 100)
-COLOR_TRIAL       = (139,  69,  19, 100)
-COLOR_TARGET      = (  0, 255,   0, 100)
-COLOR_PUMP        = (  0,   0, 255, 100)
-COLOR_TIMEOUT     = (  0,   0,   0, 100)
-
 BORDER_STYLE      = '1px solid rgb(185,185,185)'
+
+# OpenGL colors RGBA 0-1
+COLOR_SPEAKER     = (1   , 0   , 0   , 1 )
+COLOR_MIC         = (0   , 0   , 0   , 1 )
+COLOR_POKE        = (0   , .784, 0   , 1 )
+COLOR_SPOUT       = (0   , 0   , .784, 1 )
+COLOR_BUTTON      = (.6  , .6  , .6  , 1 )
+COLOR_TRIAL       = (.545, .271, .075, .4)
+COLOR_TARGET      = (0   , 1   , 0   , .4)
+COLOR_PUMP        = (0   , 0   , 1   , .4)
+COLOR_TIMEOUT     = (0   , 0   , 0   , .4)
 
 DAQ_A             = 'dev1'   # all analog/digital input/output except physiology
 DAQ_B             = 'dev2'   # only physiology analog input

@@ -35,7 +35,7 @@ def init():
     if gb.appMode != 'Calibration':
         digitalInput = daq.DigitalInput('/%s/port0/line1:3' % config.DAQ_A,
             name='digitalInput', getTS=getTS,
-            lineNames=['spout', 'poke', 'button'])
+            lineNames=['poke', 'spout', 'button'])
 
         digitalOutput = daq.DigitalOutput('/%s/port1/line1' % config.DAQ_A,
             name='digitalOutput', initialState=1)
