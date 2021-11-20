@@ -61,6 +61,17 @@ for which_noise_token = 1
 	% E: Unmod = 0; Mod0 = 1; ModPi = 2; Envelope characteristics
 	% Fc: Low = 0; Mid = 1; High = 2; Center Frequency in Hz
 
-	plot((1:size(masker,2))/t.Fs, masker);
-	audiowrite('Supermasker.wav', masker, t.Fs, 'bitspersample', 16); % on target mod0
+% 	plot((1:size(masker,2))/t.Fs, masker);
+
+	[psd, f] = periodogram(masker, [], [], t.Fs);
+	
+	%%
+	range = 499<=f & f<=10e3;
+	semilogx(f(range), 10*log10(psd(range)), 'linewidth',1);
+	hold on;
+	x = [500, 1e3, 2e3, 5e3, 10e3];
+	xticks(x);
+% 	xticklabels(x/1e3);
+	
+% 	audiowrite('Supermasker.wav', masker, t.Fs, 'bitspersample', 16); % on target mod0
 end

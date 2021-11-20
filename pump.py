@@ -1,10 +1,8 @@
 '''Communication with New Era pump series using a RS-232 interface.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 
 Original project repository: https://bitbucket.org/bburan/new-era
 Copyright (C) 2011-2012 Brad Buran <bburan@alum.mit.edu>

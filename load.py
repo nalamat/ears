@@ -1,10 +1,8 @@
 '''Setup and load an experiment with user selectable settings.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 if __name__=='__main__':
@@ -27,6 +25,7 @@ if __name__=='__main__':
     import physiology
     import calibration
     import globals     as gb
+    import glPlotLib   as glp
 
 
     try:
@@ -74,6 +73,7 @@ if __name__=='__main__':
         sys.excepthook  = masterExceptionHook
 
         # initialize app
+        glp.setSurfaceFormat()
         app = QtWidgets.QApplication([])
         app.setApplicationName = config.APP_NAME
         app.setWindowIcon(QtGui.QIcon(config.APP_LOGO))

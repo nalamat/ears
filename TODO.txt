@@ -5,7 +5,7 @@
   specifically start or stop AnalogChannel processing thread
 + why AnalogChannel falls behind the plot window?
   found a tiny bug when advancing to next window
-- inherit from pyqtgraph PlotItem and add feature for appending data without
+x inherit from pyqtgraph PlotItem and add feature for appending data without
   updating the entire plot
 ? use enums instead of strings
 x should Context.clearValues set all items to type()? what about np.nan?
@@ -16,12 +16,20 @@ x should Context.clearValues set all items to type()? what about np.nan?
 + activate pump
 + log pump
 - add _nsOffset to daq.AnalogInput
-- migrate plotting subsystem to vispy and gloo
-- add notes to export
+x migrate plotting subsystem to vispy and gloo
+- migrate plotting subsystem to OpenGL
++ add notes to export
 - add push in (checkbox style) go/nogo buttons
 - add a number parameter for repeat if FA
 - add number of go reminds in the beginning of session
-- add screenshots to github page
-- add a readme
-- add 2 decimal points to experiment duration when exporting
++ add screenshots to github page
++ add a readme
++ add 2 decimal points to experiment duration when exporting
 - add export for spout training and target training
++ update AnalogPlotBuffered when resized
++ automatic handling of GL context when initializing or refreshing Item
++ fix the bug in AnalogPlotBuffered where previous cycle's samples are drawn
+  for as the newest samples
++ fix misc.CircularBuffer overflow when window is not visible and not updated
++ online median calculation for pipeline.SpikeDetector
+  (fixed with asynchronous calculation)

@@ -1,10 +1,8 @@
 '''Real-time plotting using pyqtgraph and PyQt5 packages.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import time
@@ -20,7 +18,7 @@ from   PyQt5        import QtCore, QtWidgets, QtGui
 
 import hdf5
 import misc
-import pipeline
+import pypeline
 
 
 log = logging.getLogger(__name__)
@@ -512,13 +510,14 @@ class AnalogChannel(BaseChannel):
 
             # prep filter
             fs = self.fs
+            nyq = fs/2
             fl, fh = value
             if (fl and 0<fl and fh and fh<fs):
-                filterBA = sp.signal.butter(6, [fl/fs,fh/fs], 'bandpass')
+                filterBA = sp.signal.butter(6, [fl/nyq,fh/nyq], 'bandpass')
             elif fl and 0<fl:
-                filterBA = sp.signal.butter(6, fl/fs, 'highpass')
+                filterBA = sp.signal.butter(6, fl/nyq, 'highpass')
             elif fh and fh<fs:
-                filterBA = sp.signal.butter(6, fh/fs, 'lowpass')
+                filterBA = sp.signal.butter(6, fh/nyq, 'lowpass')
             else:
                 filterBA = None
 
@@ -854,7 +853,7 @@ class AnalogChannel(BaseChannel):
             self._refresh()
 
 
-class AnalogPlot(pipeline.Sampled):
+class AnalogPlot(pypeline.Sampled):
     '''All-in-one class for storage and plotting of multiline analog signals.
 
     Utilizes the `hdf5` module for storage in HDF5 file format.
@@ -1220,6 +1219,10 @@ class BaseEpochChannel(BaseChannel):
     @property
     def plotWidget(self):
         return self._plotWidget
+
+    @property
+    def active(self):
+        return len(self._data) and self._data[-1][1] is None
 
     def __init__(self, plotWidget=None, hdf5Node=None, source=None,
             label=None, labelOffset=0):

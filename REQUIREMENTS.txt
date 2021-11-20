@@ -1,0 +1,13 @@
+# conda
+python~=3.6
+pyserial
+scipy
+numpy
+pandas
+pytables
+pyqt~=5.8
+pyqtgraph
+pyopengl
+
+# only pip
+pydaqmx    # not needed with --sim option

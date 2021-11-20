@@ -1,10 +1,8 @@
 '''Behavior window for closed-loop control of experiment paradigms.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import os
@@ -22,14 +20,13 @@ import scipy            as     sp
 import datetime         as     dt
 from   PyQt5            import QtCore, QtWidgets, QtGui
 
-import daq
 import gui
 import daqs
 import hdf5
 import misc
 import pump
 import config
-import pipeline
+import pypeline
 import plotting
 import globals          as     gb
 
@@ -199,8 +196,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                             label='Spout', labelOffset=.5,
                             yScale=.2, yOffset=0, color=config.COLOR_SPOUT)
 
-        (daqs.analogInput >> pipeline.DownsampleAverage(ds=4) >>
-            pipeline.Split() >> (self.speakerTrace,
+        (daqs.analogInput >> pypeline.DownsampleAverage(ds=4) >>
+            pypeline.Split() >> (self.speakerTrace,
                                  self.micTrace,
                                  self.pokeTrace,
                                  self.spoutTrace))
@@ -209,9 +206,9 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
             self.micStorage     = hdf5.AnalogStorage('/trace/mic')
 
-            daqs.analogInput >> pipeline.Split() >> (self.speakerStorage,
+            daqs.analogInput >> pypeline.Split() >> (self.speakerStorage,
                                                      self.micStorage,
-                                                     pipeline.DummySink(2))
+                                                     pypeline.DummySink(2))
 
         # rectangular epochs
         self.trialEpoch   = plotting.RectEpochChannel(self.plot,
@@ -702,6 +699,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         elif (event.key() == QtCore.Qt.Key_Escape and
                 gb.status.experimentState.value == 'Running'):
             self.pauseExperiment()
+        elif event.key() == QtCore.Qt.Key_Delete:
+            self.stopPump()
 
     @gui.showExceptions
     def sessionChanged(self, item, *args):
@@ -986,8 +985,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             # total reward (ml)
             if i==0: data += '%g' % gb.session.totalReward.value
             data += '\t'
-            # experiment duration (mm:ss)
-            if i==0: data += '%02d:%02d' % (
+            # experiment duration (mm:ss.00)
+            if i==0: data += '%02d:%05.2f' % (
                 gb.session.experimentDuration.value//60,
                 gb.session.experimentDuration.value%60       )
             data += '\t'
@@ -1014,6 +1013,8 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             data += get('responseDuration', '%.3f', 'Go'     ) + '\t'
             data += get('responseDuration', '%.3f', 'Nogo'   ) + '\t'
             data += get('dPrime'          , '%.3f'           ) + '\t'
+            if i==0:
+                data += gb.session.notes.value
 
             data += '\r\n'
 
@@ -1188,30 +1189,37 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                     gb.status.trialState.value = 'Target active'
                     self.startTarget()
                 elif event == 'Button stop':
-                    raise RuntimeError('Should never happen!!')
+                    # raise RuntimeError('Should never happen!!')
+                    self.stopTarget()
                 elif event == 'Spout start':
                     pass
                 elif event == 'Spout stop':
-                    self.stopPump()
+                    # self.stopPump()
+                    pass
 
             elif state == 'Target active':
                 if event == 'Button start':
                     raise RuntimeError('Should never happen!!')
                 if event == 'Button stop':
-                    if self.pumpActive:
-                        gb.status.trialState.value = 'Awaiting button'
-                        self.stopTarget()
-                        self.evaluateParadigm()
-                    else:
-                        gb.status.trialState.value = 'Response duration'
-                        self.startEventTimer(
-                            gb.trial.maxResponseDuration.value,
-                            'Response duration elapsed')
-                        self.stopTarget()
+                    # if self.pumpActive:
+                    #     gb.status.trialState.value = 'Awaiting button'
+                    #     self.stopTarget()
+                    #     self.evaluateParadigm()
+                    # else:
+                    gb.status.trialState.value = 'Response duration'
+                    self.startEventTimer(
+                        gb.trial.maxResponseDuration.value,
+                        'Response duration elapsed')
+                    self.stopTarget()
                 elif event == 'Spout start':
-                    self.startPump()
+                    gb.status.trialState.value = 'Awaiting button'
+                    self.stopEventTimer()
+                    self.triggerPump()
+                    self.evaluateParadigm()
                 elif event == 'Spout stop':
-                    self.stopPump()
+                    # self.stopPump()
+                    # can happen if spout was initiated in 'Awaiting button'
+                    pass
 
             elif state == 'Response duration':
                 if event == 'Button start':
@@ -1223,9 +1231,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
                 elif event == 'Spout start':
                     gb.status.trialState.value = 'Awaiting button'
                     self.stopEventTimer()
-                    self.startPump()
+                    self.triggerPump()
                     self.evaluateParadigm()
                 elif event == 'Spout stop':
+                    # self.stopPump()
                     # can happen if spout was initiated in 'Awaiting button'
                     pass
                 elif event == 'Response duration elapsed':
@@ -1502,7 +1511,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
 
         minDelay = (gb.trial.targetDuration.value +
             gb.trial.intertrialDuration.value)
-        maxDelay = 5
+        maxDelay = 7
         duration = np.random.rand()*(maxDelay-minDelay) + minDelay
         self.startEventTimer(duration, 'Random trigger')
 

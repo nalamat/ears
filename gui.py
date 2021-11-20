@@ -1,10 +1,8 @@
 '''Utility functions, decorators and classes to help Qt GUI design.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import os

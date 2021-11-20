@@ -3,18 +3,16 @@
 This module allows central access to DAQ task instances from all other modules.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import logging
-import numpy   as np
+import numpy     as np
 
-import daq
 import config
-import globals as gb
+import globals   as gb
+import EasyDAQmx as daq
 
 
 log = logging.getLogger(__name__)
@@ -118,7 +116,7 @@ def getTS():
     return analogOutput.nsGenerated / analogOutput.fs
 
 def physiologyOutputDataNeeded(task, nsWritten, nsNeeded):
-    data = np.random.randn(task.lineCount, nsNeeded)
+    data = np.random.randn(task.channelCount, nsNeeded)
     t = np.arange(nsWritten, nsWritten+nsNeeded) / task.fs
     data += np.sin(2*np.pi*1*t)*10
     data += np.sin(2*np.pi*100*t)*.5

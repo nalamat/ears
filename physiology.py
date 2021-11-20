@@ -1,10 +1,8 @@
 '''Physiology window for viewing neural activity in real-time.
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import os
@@ -23,7 +21,7 @@ import daqs
 import misc
 import hdf5
 import config
-import pipeline
+import pypeline
 import plotting
 import globals     as gb
 
@@ -92,15 +90,10 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
                                 yLimits=(-4,15), yLabel='Electrodes',
                                 yGrid=[-3.5,-1.5,-1] + list(range(lineCount)))
 
-        # self.physiologyTrace  = plotting.AnalogChannel(physiologyFS,
-        #                         self.timePlot, label=lineLabels,
-        #                         hdf5Node='/trace/physiology',
-        #                         lineCount=lineCount, filter=(300,6e3),
-        #                         yScale=.1, yOffset=14, yGap=-1, grandMean=True)
-
         self.physiologyTrace   = plotting.AnalogPlot(self.timePlot,
                                 label=lineLabels,
-                                yScale=.1, yOffset=14, yGap=-1)
+                                yScale=.1 if config.SIM else 10,
+                                yOffset=14, yGap=-1)
 
         # self.physiologyTrace0  = plotting.AnalogPlot(self.timePlot,
         #                         label=lineLabels[0],
@@ -118,22 +111,22 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         #                         label=lineLabels[3],
         #                         yScale=.1, yOffset=11, yGap=-1)
 
-        self.grandAverage      = pipeline.GrandAverage()
-        self.filter            = pipeline.LFilter(fl=300, fh=6e3, n=6)
+        self.grandAverage      = pypeline.GrandAverage()
+        self.filter            = pypeline.LFilter(fl=300, fh=6e3, n=6)
 
-        # processing and plotting pipeline
-        (daqs.physiologyInput >> pipeline.Thread() >> self.filter
-            >> self.grandAverage >> pipeline.DownsampleMinMax(ds=32)
+        # processing and plotting pypeline
+        (daqs.physiologyInput >> pypeline.Thread() >> self.filter
+            >> self.grandAverage >> pypeline.DownsampleMinMax(ds=32)
             >> self.physiologyTrace)
-            # >> pipeline.Split() >> (pipeline.Node(), pipeline.DummySink(14))
+            # >> pypeline.Split() >> (pypeline.Node(), pypeline.DummySink(14))
             # >> (self.physiologyTrace0,
-            #    pipeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
-            #    pipeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
-            #    pipeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
+            #    pypeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
+            #    pypeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
+            #    pypeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
             #    ))
 
 
-        # rectangular plots
+        # rectangular epoch plots
         self.trialEpoch       = plotting.RectEpochChannel(self.timePlot,
                                 label='Trial', source=behavior.trialEpoch,
                                 yOffset=-2, yRange=.5, color=config.COLOR_TRIAL)

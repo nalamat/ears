@@ -1,10 +1,8 @@
 '''Some utility stuff!
 
 
-This file is part of the EARS project: https://github.com/nalamat/ears
-Copyright (C) 2017-2018 Nima Alamatsaz <nima.alamatsaz@njit.edu>
-Copyright (C) 2017-2018 Antje Ihlefeld <antje.ihlefeld@njit.edu>
-Distrubeted under GNU GPLv3. See LICENSE.txt for more info.
+This file is part of the EARS project <https://github.com/nalamat/ears>
+Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 '''
 
 import os
@@ -150,6 +148,7 @@ class CircularBuffer():
     @property
     def nsRead(self):
         '''Total number of samples read from the buffer.'''
+        self._checkOverflow()
         return self._nsRead
 
     @nsRead.setter
@@ -172,22 +171,29 @@ class CircularBuffer():
 
     @property
     def nsAvailable(self):
-        '''Number of samples available but not read yet.'''
+        '''Number of new samples available but not read yet.'''
+        self._checkOverflow()
         return self._nsWritten - self._nsRead
 
-    def __init__(self, shape, axis=-1, dtype=np.float64):
+    def __init__(self, shape, axis=-1, dtype=np.float64, allowOverflow=False):
         '''
         Args:
             shape (int or tuple of int): Size of each dimension.
             axis (int): The dimension along which the buffer is circular.
+                Defaults to the last dimension (-1).
             dtype (type): Data type to define the numpy array with.
+                Defaults to float64.
+            allowOverflow (bool): When reading doesn't occur as fast as writing,
+                raise an exception (False) or automatically handle buffer
+                overflow (True). Defaults to False.
         '''
-        self._data         = np.zeros(shape, dtype)
-        self._axis         = axis
-        self._nsWritten    = 0
-        self._nsRead       = 0
-        self._updatedEvent = threading.Event()
-        self._lock         = threading.Lock()
+        self._data          = np.zeros(shape, dtype)
+        self._axis          = axis
+        self._allowOverflow = allowOverflow
+        self._nsWritten     = 0
+        self._nsRead        = 0
+        self._updatedEvent  = threading.Event()
+        self._lock          = threading.Lock()
 
     def __str__(self):
         return ' nsWritten: %d\nData:\n%s' % (self._nsWritten, self._data)
@@ -215,6 +221,17 @@ class CircularBuffer():
         window[self._axis] = indices
         return tuple(window)
 
+    def _checkOverflow(self):
+        '''Check for buffer overflow.'''
+        if self._nsRead < self._nsWritten - self._data.shape[self._axis]:
+            if self._allowOverflow:
+                self._nsRead = self._nsWritten - self._data.shape[self._axis]
+            else:
+                raise BufferError(
+                    'Circular buffer overflow occured (%d, %d, %d)' %
+                    (self._nsRead, self._nsWritten,
+                    self._data.shape[self._axis]))
+
     def write(self, data, at=None):
         '''Write samples to the end of buffer.
 
@@ -230,6 +247,7 @@ class CircularBuffer():
         if at is None:
             at = self._nsWritten
         if at < 0:
+            # TODO: shouldn't this be '+ at'?
             at = self._nsWritten - at
         if at < 0:
             raise IndexError('Cannot write before 0')
@@ -249,9 +267,7 @@ class CircularBuffer():
         # update written number of sample
         self._nsWritten = at + data.shape[self._axis]
         # check for buffer overflow
-        if self._nsRead < self._nsWritten - self._data.shape[self._axis]:
-            raise BufferError('Circular buffer overflow occured (%d, %d, %d)' %
-                (self._nsRead,self._nsWritten,self._data.shape[self._axis]))
+        self._checkOverflow()
         self._updatedEvent.set()
 
     def read(self, frm=None, to=None, advance=True):
@@ -288,7 +304,7 @@ class CircularBuffer():
         # and before the returned data (by reference) is used
         window = self._getWindow(indices)
 
-        # advance number of samples written
+        # advance number of samples read
         if advance:
             self._nsRead = to
 
