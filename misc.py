@@ -1,4 +1,4 @@
-'''Some utility stuff!
+'''Utility functions and classes.
 
 
 This file is part of the EARS project <https://github.com/nalamat/ears>

@@ -1,5 +1,4 @@
 # conda
-python~=3.6
 pyserial
 scipy
 numpy
@@ -11,3 +10,6 @@ pyopengl
 
 # only pip
 pydaqmx    # not needed with --sim option
+pype
+ezdaqmx
+glplot

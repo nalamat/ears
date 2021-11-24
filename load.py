@@ -17,6 +17,8 @@ if __name__=='__main__':
 
     warnings.filterwarnings('ignore', category=FutureWarning, module='h5py')
 
+    import glplot      as glp
+
     import gui
     import hdf5
     import setup
@@ -25,7 +27,6 @@ if __name__=='__main__':
     import physiology
     import calibration
     import globals     as gb
-    import glPlotLib   as glp
 
 
     try:

@@ -20,15 +20,16 @@ import scipy            as     sp
 import datetime         as     dt
 from   PyQt5            import QtCore, QtWidgets, QtGui
 
+import pype
+import glplot           as     glp
+
 import gui
 import daqs
 import hdf5
 import misc
 import pump
 import config
-import pypeline
 import globals          as     gb
-import glPlotLib        as     glp
 
 
 log = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.spoutEpochStorage   = hdf5.EpochStorage('/epoch/spout')
         self.buttonEpochStorage  = hdf5.EpochStorage('/epoch/button')
 
-        daqs.digitalInput >> pypeline.Split() >> (
+        daqs.digitalInput >> pype.Split() >> (
             self.pokeEpochStorage,
             self.spoutEpochStorage,
             self.buttonEpochStorage)
@@ -177,10 +178,10 @@ class BehaviorWindow(QtWidgets.QMainWindow):
             self.speakerStorage = hdf5.AnalogStorage('/trace/speaker')
             self.micStorage     = hdf5.AnalogStorage('/trace/mic')
 
-            daqs.analogInput >> pypeline.Split() >> (
+            daqs.analogInput >> pype.Split() >> (
                 self.speakerStorage,
                 self.micStorage,
-                pypeline.DummySink(2))
+                pype.DummySink(2))
 
     def initPump(self):
         self.pump = pump.PumpInterface()
@@ -213,7 +214,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.spoutPlot      = glp.AnalogPlot(self.scope, pos=(0,2/y),
             size=(1,2/y), label='Spout', fgColor=config.COLOR_SPOUT)
 
-        daqs.analogInput >> pypeline.Split() >> (
+        daqs.analogInput >> pype.Split() >> (
             self.speakerPlot >> self.scope,
             self.micPlot,
             self.pokePlot,
@@ -227,7 +228,7 @@ class BehaviorWindow(QtWidgets.QMainWindow):
         self.buttonEpochPlot = glp.EpochPlot(self.scope, pos=(0,0/y),
             size=(1,2/y), type='marker', fgColor=config.COLOR_BUTTON)
 
-        daqs.digitalInput >> pypeline.Split() >> (
+        daqs.digitalInput >> pype.Split() >> (
             self.pokeEpochPlot,
             self.spoutEpochPlot,
             self.buttonEpochPlot)

@@ -10,9 +10,10 @@ Copyright (C) 2017-2021 Nima Alamatsaz <nima.alamatsaz@gmail.com>
 import logging
 import numpy     as np
 
+import ezdaqmx   as daq
+
 import config
 import globals   as gb
-import EasyDAQmx as daq
 
 
 log = logging.getLogger(__name__)

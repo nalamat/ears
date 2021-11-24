@@ -16,14 +16,15 @@ import scipy.stats
 import numpy       as     np
 from   PyQt5       import QtCore, QtWidgets, QtGui
 
+import pype
+import glplot      as     glp
+
 import gui
 import daqs
 import misc
 import hdf5
 import config
-import pypeline
-import globals     as gb
-import glPlotLib   as glp
+import globals     as     gb
 
 
 log = logging.getLogger(__name__)
@@ -107,20 +108,20 @@ class PhysiologyWindow(QtWidgets.QMainWindow):
         # self.spikeOverlay = SpikeOverlay(self.scope, pos=(0,.1), size=(1,.9))
 
         # physiology processing nodes
-        self.grandAverage      = pypeline.GrandAverage()
-        self.filter            = pypeline.LFilter(fl=300, fh=6e3, n=6)
-        self.scaler            = pypeline.Scaler(scale=0, dB=True)
+        self.grandAverage      = pype.GrandAverage()
+        self.filter            = pype.LFilter(fl=300, fh=6e3, n=6)
+        self.scaler            = pype.Scaler(scale=0, dB=True)
 
         # processing and plotting pypeline
-        (daqs.physiologyInput >> pypeline.Thread() >>
+        (daqs.physiologyInput >> pype.Thread() >>
             self.grandAverage >> self.filter >> self.scaler >>
             (self.scope,
             self.physiologyPlot))
-            # >> pypeline.Split() >> (pypeline.Node(), pypeline.DummySink(14))
+            # >> pype.Split() >> (pype.Node(), pype.DummySink(14))
             # >> (self.physiologyTrace0,
-            #    pypeline.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
-            #    pypeline.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
-            #    pypeline.DownsampleAverage(ds=50) >> self.physiologyTrace3,
+            #    pype.DownsampleMinMax(ds=50) >> self.physiologyTrace1,
+            #    pype.DownsampleLTTB(fsOut=31250/50) >> self.physiologyTrace2,
+            #    pype.DownsampleAverage(ds=50) >> self.physiologyTrace3,
             #    ))
 
         # rectangular epoch plots

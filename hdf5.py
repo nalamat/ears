@@ -13,7 +13,7 @@ import threading
 import numpy           as np
 import tables          as tb
 
-import pypeline
+import pype
 
 
 log   = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ def _checkFile():
 #     log.info('Stopping HFD5 loop')
 
 
-class AnalogStorage(pypeline.Sampled):
+class AnalogStorage(pype.Sampled):
     def __init__(self, hdf5Node, compLib='zlib', compLevel=1, **kwargs):
         '''
         Args:
@@ -202,7 +202,7 @@ class AnalogStorage(pypeline.Sampled):
         super()._written(data, source)
 
 
-class EpochStorage(pypeline.Node):
+class EpochStorage(pype.Node):
     @property
     def partial(self):
         return self._partial is not None

@@ -55,15 +55,15 @@ session.
 ![Physiology window screenshot](media/screenshot-2.png?raw=true)
 
 
-## [Pypeline: Online stream processing](github.com/nalamat/pypeline)
+## [Pype: Online stream processing](github.com/nalamat/pype)
 
-The `Pypeline` module provides a generic, easy to use, and extendable object-oriented framework for online processing of data streams in Python, which is particularly suited for handling multi-channel electrophysiology signals in the EARS software.
+The `Pype` module provides a generic, easy to use, and extendable object-oriented framework for online processing of data streams in Python, which is particularly suited for handling multi-channel electrophysiology signals in the EARS software.
 
-Inspired by the `dplyr` package in R, `Pypeline` allows definition of stream processing stages as `Node`s that can be connected to each other using `>>`, the shift operator. Alternatively, `|` or the shell pipe operator can be used.
+Inspired by the `dplyr` package in R, `Pype` allows definition of stream processing stages as `Node`s that can be connected to each other using `>>`, the shift operator. Alternatively, `|` or the shell pipe operator can be used.
 
 ```python
 daqs.physiologyInput \
-    >> pypeline.LFilter(fl=300, fh=6e3, n=6) \
+    >> pype.LFilter(fl=300, fh=6e3, n=6) \
     >> self.physiologyPlot
 ```
 
@@ -73,10 +73,10 @@ Normally data is processed synchronously in the pipeline, meaning the execution 
 
 ```python
 daqs.physiologyInput \
-    >> pypeline.Thread() \
-    >> pypeline.LFilter(fl=300, fh=6e3, n=6) \
-    >> pypeline.GrandAverage() \
-    >> pypeline.DownsampleMinMax(ds=32) \
+    >> pype.Thread() \
+    >> pype.LFilter(fl=300, fh=6e3, n=6) \
+    >> pype.GrandAverage() \
+    >> pype.DownsampleMinMax(ds=32) \
     >> self.physiologyPlot
 ```
 
@@ -84,10 +84,10 @@ Other than linear pipelines, it is possible to connect nodes to multiple branche
 
 ```python
 daqs.physiologyInput \
-    >> pypeline.Thread() \
-    >> (pypeline.LFilter(fl=None, fh=300 , n=6) >> self.physiologyPlotLow,
-        pypeline.LFilter(fl=300 , fh=6e3 , n=6) >> self.physiologyPlotMid,
-        pypeline.LFilter(fl=6e3 , fh=None, n=6) >> self.physiologyPlotHigh)
+    >> pype.Thread() \
+    >> (pype.LFilter(fl=None, fh=300 , n=6) >> self.physiologyPlotLow,
+        pype.LFilter(fl=300 , fh=6e3 , n=6) >> self.physiologyPlotMid,
+        pype.LFilter(fl=6e3 , fh=None, n=6) >> self.physiologyPlotHigh)
 ```
 
 Visualizations of pipeline structures are coming soon!
@@ -96,23 +96,23 @@ If instead of passing the same data to all downstream nodes, a splitting behavio
 
 ```python
 daqs.physiologyInput \
-    >> pypeline.Thread() \
-    >> pypeline.LFilter(fl=300 , fh=6e3 , n=6) \
-    >> pypeline.SpikeDetector() \
-    >> pipeline.Split() \
+    >> pype.Thread() \
+    >> pype.LFilter(fl=300 , fh=6e3 , n=6) \
+    >> pype.SpikeDetector() \
+    >> pype.Split() \
     >> (self.spikePlot1, self.spikePlot2, self.spikePlot3)
 ```
 
 
-## [glPlotLib: GPU accelerated plotting](github.com/nalamat/glplotlib)
+## [GLPlot: Online GPU-accelerated plotting](github.com/nalamat/glplot)
 
 Currently in development.
 
-For a demo of GPU accelerated plotting using OpenGL and online spike detection, try:
+For a demo of GPU-accelerated plotting using OpenGL and online spike detection, try:
 
-    $ python glPlotLib.py
+    $ python -m glplot
 
-![GPU accelerated plotting screenshot](media/screenshot-3.png?raw=true)
+![GPU-accelerated plotting screenshot](media/screenshot-3.png?raw=true)
 
 
 ## Resources
@@ -142,7 +142,7 @@ this program. If not, see <http://www.gnu.org/licenses/>.
 
 ## Web and contact
 
-Visit the EARS page at GitHub:
+Visit the EARS project page on GitHub:
 <https://github.com/nalamat/ears>
 
 Ask questions, report bugs and give suggestions here:
